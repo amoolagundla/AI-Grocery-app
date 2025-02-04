@@ -36,7 +36,10 @@ namespace OCR_AI_Grocery
             {
                 // Authenticate using Managed Identity (No Connection String Needed)
                 var blobUri = new Uri($"https://{storageAccountName}.blob.core.windows.net");
-                var blobServiceClient = new BlobServiceClient(blobUri, new DefaultAzureCredential(new DefaultAzureCredentialOptions()));
+                var blobServiceClient = new BlobServiceClient(
+                            new Uri($"https://{Environment.GetEnvironmentVariable("AzureWebJobsStorage__accountName")}.blob.core.windows.net"),
+                            new DefaultAzureCredential()
+                        );
                 var blobContainerClient = blobServiceClient.GetBlobContainerClient(containerName);
                 var blobClient = blobContainerClient.GetBlobClient(fileName);
 
