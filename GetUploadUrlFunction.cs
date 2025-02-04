@@ -28,7 +28,7 @@ namespace OCR_AI_Grocery
         {
             _logger.LogInformation("Generating a pre-signed upload URL using Managed Identity.");
 
-            string storageAccountName = "receipts"; // Replace with actual storage account name
+            string storageAccountName = "reciepts"; // Replace with actual storage account name
             string containerName = "receipts";
             string fileName = $"receipt_{Guid.NewGuid()}.jpg"; // Unique filename
 
