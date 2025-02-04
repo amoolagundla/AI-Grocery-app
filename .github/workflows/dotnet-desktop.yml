@@ -1,0 +1,53 @@
+name: Build and Deploy Azure Function
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: 
+
+env:
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' 
+  DOTNET_VERSION: 8.0.x  
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for Azure OIDC authentication
+      contents: read # Required for actions/checkout
+
+    steps:
+      - name: 'Checkout Repository'
+        uses: actions/checkout@v4
+
+      - name: 'Setup .NET ${{ env.DOTNET_VERSION }}'
+        uses: actions/setup-dotnet@v1
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 'Restore Dependencies'
+        run: dotnet restore
+
+      - name: 'Build Project'
+        run: dotnet build --configuration Release --output ./output
+
+      - name: 'Publish Project'
+        run: dotnet publish --configuration Release --output ./publish
+
+      - name: 'Login to Azure'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID }}
+
+      - name: 'Deploy to Azure Function'
+        uses: Azure/functions-action@v1
+        with:
+          app-name: 'ocr-function-ai-grocery'
+          slot-name: 'Production'
+          package: './publish'  # ✅ FIXED: Use pre-built output
+          respect-funcignore: true
+          enable-oryx-build: false  # ✅ Disable Oryx build (not needed)
+          remote-build: false  # ✅ Disable remote build (FlexConsumption doesn't support it)
