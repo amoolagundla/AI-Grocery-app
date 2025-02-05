@@ -1,67 +1,68 @@
-using System;
-using System.IO;
+﻿using System;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Mvc; 
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
+using Azure;
+using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Sas;
 using Microsoft.Azure.Functions.Worker;
-using Azure.Identity;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Mvc;
+using Azure.Storage.Blobs.Models;
 
-namespace OCR_AI_Grocery
+public class GetUploadUrlFunction
 {
-    public class GetUploadUrlFunction
+    private readonly ILogger<GetUploadUrlFunction> _logger;
+
+    public GetUploadUrlFunction(ILogger<GetUploadUrlFunction> logger)
     {
-        private readonly ILogger<GetUploadUrlFunction> _logger;
+        _logger = logger;
+    }
 
-        public GetUploadUrlFunction(ILogger<GetUploadUrlFunction> logger)
+    [Function(nameof(GetUploadUrlFunction))]
+    public async Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = null)] HttpRequestData req,
+        FunctionContext context)
+    {
+        _logger.LogInformation("Generating a pre-signed upload URL using SAS Token.");
+
+        string storageAccountName = "reciepts"; // Make sure this is correct
+        string containerName = "receipts";
+        string fileName = $"receipt_{Guid.NewGuid()}.jpg"; // Unique filename
+
+        try
         {
-            _logger = logger;
+            // Authenticate using Managed Identity
+            var blobServiceClient = new BlobServiceClient(
+                new Uri($"https://{storageAccountName}.blob.core.windows.net"),
+                new DefaultAzureCredential());
+
+            var blobContainerClient = blobServiceClient.GetBlobContainerClient(containerName);
+            var blobClient = blobContainerClient.GetBlobClient(fileName);
+
+            // Get User Delegation Key
+            var userDelegationKey = await blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1));
+
+            // Generate SAS Token
+            var sasBuilder = new BlobSasBuilder
+            {
+                BlobContainerName = containerName,
+                BlobName = fileName,
+                Resource = "b",
+                ExpiresOn = DateTime.UtcNow.AddMinutes(15) // URL valid for 15 mins
+            };
+            sasBuilder.SetPermissions(BlobContainerSasPermissions.Write);
+
+            var sasToken = sasBuilder.ToSasQueryParameters(userDelegationKey, storageAccountName).ToString();
+
+            var sasUrl = $"{blobClient.Uri}?{sasToken}";
+
+            return new OkObjectResult(new { uploadUrl = sasUrl, fileName });
         }
-
-        [Function(nameof(GetUploadUrlFunction))]
-        public async Task<IActionResult> Run(
-            [HttpTrigger(AuthorizationLevel.Function, "get", Route = null)] HttpRequestData req,
-            FunctionContext context)
+        catch (Exception ex)
         {
-            _logger.LogInformation("Generating a pre-signed upload URL using Managed Identity.");
-
-            string storageAccountName = "reciepts"; // Replace with actual storage account name
-            string containerName = "receipts";
-            string fileName = $"receipt_{Guid.NewGuid()}.jpg"; // Unique filename
-
-            try
-            {
-                // Authenticate using Managed Identity (No Connection String Needed)
-                var blobUri = new Uri($"https://{storageAccountName}.blob.core.windows.net");
-                var blobServiceClient = new BlobServiceClient(
-                            new Uri($"https://{Environment.GetEnvironmentVariable("AzureWebJobsStorage__accountName")}.blob.core.windows.net"),
-                            new DefaultAzureCredential()
-                        );
-                var blobContainerClient = blobServiceClient.GetBlobContainerClient(containerName);
-                var blobClient = blobContainerClient.GetBlobClient(fileName);
-
-                // Generate a SAS Token (valid for 15 minutes)
-                var sasBuilder = new BlobSasBuilder
-                {
-                    BlobContainerName = containerName,
-                    BlobName = fileName,
-                    Resource = "b",
-                    ExpiresOn = DateTime.UtcNow.AddMinutes(15) // URL expires in 15 minutes
-                };
-                sasBuilder.SetPermissions(BlobContainerSasPermissions.Write);
-
-                var sasUri = blobClient.GenerateSasUri(sasBuilder);
-
-                return new OkObjectResult(new { uploadUrl = sasUri.ToString(), fileName });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error generating upload URL: {ex.Message}");
-                return new ObjectResult("Error generating upload URL") { StatusCode = 500 };
-            }
+            _logger.LogError($"Error generating upload URL: {ex.Message}");
+            return new ObjectResult("Error generating upload URL") { StatusCode = 500 };
         }
     }
 }
