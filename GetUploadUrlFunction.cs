@@ -21,7 +21,7 @@ public class GetUploadUrlFunction
 
     [Function(nameof(GetUploadUrlFunction))]
     public async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = null)] HttpRequestData req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = null)] HttpRequestData req,
         FunctionContext context)
     {
         _logger.LogInformation("Generating a pre-signed upload URL using SAS Token.");
