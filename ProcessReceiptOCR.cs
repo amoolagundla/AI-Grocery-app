@@ -26,31 +26,39 @@ namespace OCR_AI_Grocery
         {
             _logger = logger;
         }
-        
-        [Function("ProcessReceiptOCR")] 
+
+        [Function("ProcessReceiptOCR")]
         [FixedDelayRetry(5, "00:00:10")]
-        [EventHubOutput("dest", Connection = "EventHubConnection")]
-        public async  Task<string> EventHubFunction(
-        [EventHubTrigger("reciept", Connection = "EventHubConnection")] string[] input,
-        FunctionContext context,ILogger log)
+        public async Task<string> EventHubFunction(
+    [EventHubTrigger("reciept", Connection = "EventHubConnection")] string[] events,
+    FunctionContext context)
         {
-            foreach(string eventBody in input)
+            var log = context.GetLogger("ProcessReceiptOCR");
+
+            foreach (string eventJson in events)
             {
-                log.LogInformation($"ProcessReceiptOCR function processing event: {eventBody}");
+                log.LogInformation($"ProcessReceiptOCR function processing event: {eventJson}");
                 try
                 {
-                    string blobUrl = ExtractBlobUrl(eventBody);
+                    var eventData = System.Text.Json.JsonSerializer.Deserialize<EventGridEvent>(eventJson);
+                    if (eventData == null)
+                    {
+                        log.LogWarning("Invalid event data. Skipping processing.");
+                        continue;
+                    }
+
+                    string blobUrl = eventData.Data.GetProperty("url").GetString();
                     if (string.IsNullOrEmpty(blobUrl))
                     {
                         log.LogWarning("Blob URL not found in event. Skipping processing.");
-                         
+                        continue;
                     }
 
                     using var blobContent = await DownloadBlobAsync(blobUrl);
                     if (blobContent == null)
                     {
                         log.LogError($"Failed to download blob from {blobUrl}. Skipping processing.");
-                        
+                        continue;
                     }
 
                     string extractedText = await PerformOCR(blobContent);
@@ -65,9 +73,20 @@ namespace OCR_AI_Grocery
                     // Consider adding telemetry or alerting here for critical errors
                 }
             }
-            
 
             return string.Empty;
+        }
+
+        public class EventGridEvent
+        {
+            public string Topic { get; set; }
+            public string Subject { get; set; }
+            public string EventType { get; set; }
+            public string Id { get; set; }
+            public System.Text.Json.JsonElement Data { get; set; }
+            public string DataVersion { get; set; }
+            public string MetadataVersion { get; set; }
+            public DateTime EventTime { get; set; }
         }
 
 
