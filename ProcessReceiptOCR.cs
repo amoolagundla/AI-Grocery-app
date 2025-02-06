@@ -47,7 +47,7 @@ namespace OCR_AI_Grocery
                         continue;
                     }
 
-                    string blobUrl = eventData.Data.GetProperty("url").GetString();
+                    string blobUrl = eventData.data.url;
                     if (string.IsNullOrEmpty(blobUrl))
                     {
                         log.LogWarning("Blob URL not found in event. Skipping processing.");
@@ -79,15 +79,35 @@ namespace OCR_AI_Grocery
 
         public class EventGridEvent
         {
-            public string Topic { get; set; }
-            public string Subject { get; set; }
-            public string EventType { get; set; }
-            public string Id { get; set; }
-            public System.Text.Json.JsonElement Data { get; set; }
-            public string DataVersion { get; set; }
-            public string MetadataVersion { get; set; }
-            public DateTime EventTime { get; set; }
+            public string topic { get; set; }
+            public string subject { get; set; }
+            public string eventType { get; set; }
+            public string id { get; set; }
+            public Data data { get; set; }
+            public string dataVersion { get; set; }
+            public string metadataVersion { get; set; }
+            public DateTime eventTime { get; set; }
         }
+
+        public class Data
+        {
+            public string api { get; set; }
+            public string clientRequestId { get; set; }
+            public string requestId { get; set; }
+            public string eTag { get; set; }
+            public string contentType { get; set; }
+            public int contentLength { get; set; }
+            public string blobType { get; set; }
+            public string accessTier { get; set; }
+            public string url { get; set; }
+            public string sequencer { get; set; }
+            public Storagediagnostics storageDiagnostics { get; set; }
+        }
+
+        public class Storagediagnostics
+        {
+            public string batchId { get; set; }
+        } 
 
 
         private string ExtractBlobUrl(string eventBody)
