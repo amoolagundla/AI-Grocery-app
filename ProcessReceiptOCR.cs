@@ -40,7 +40,7 @@ namespace OCR_AI_Grocery
                 log.LogInformation($"ProcessReceiptOCR function processing event: {eventJson}");
                 try
                 {
-                    var eventData = System.Text.Json.JsonSerializer.Deserialize<EventGridEvent>(eventJson);
+                    var eventData = System.Text.Json.JsonSerializer.Deserialize<List<EventGridEvent>>(eventJson).FirstOrDefault();
                     if (eventData == null)
                     {
                         log.LogWarning("Invalid event data. Skipping processing.");
