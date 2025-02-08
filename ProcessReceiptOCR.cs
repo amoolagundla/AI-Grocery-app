@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -9,12 +9,20 @@ using Azure.Messaging.EventHubs;
 using Azure.Storage.Blobs;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using Azure.Identity;
+using Grpc.Core;
+using Microsoft.Azure.Cosmos;
+using Newtonsoft.Json;
 
 namespace OCR_AI_Grocery
 {
     public class ProcessReceiptOCR
     {
-        private readonly ILogger<ProcessReceiptOCR> _logger;
+        private readonly ILogger _logger;
+        private readonly CosmosClient _cosmosClient;
+        private readonly Container _container;
+
+
         private const string StorageAccountName = "reciepts"; // Corrected spelling
         private const string ContainerName = "receipts";
 
@@ -22,9 +30,13 @@ namespace OCR_AI_Grocery
         private const string VisionEndpoint = "https://reciept-vision.cognitiveservices.azure.com/";
         private const string VisionKey = "EzK1s1e1KwCa3ecEzzG8MnWk7caCsbd698URjSn9NltjqIOkfRQQJQQJ99BBACYeBjFXJ3w3AAAFACOGzB6B";
 
-        public ProcessReceiptOCR(ILogger<ProcessReceiptOCR> logger)
+        public ProcessReceiptOCR(ILoggerFactory loggerFactory)
         {
-            _logger = logger;
+            _logger = loggerFactory.CreateLogger<ProcessReceiptOCR>();
+
+            string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString");
+            _cosmosClient = new CosmosClient(cosmosDbConnection);
+            _container = _cosmosClient.GetContainer("ReceiptsDB", "receipts");
         }
 
         [Function("ProcessReceiptOCR")]
@@ -54,18 +66,21 @@ namespace OCR_AI_Grocery
                         continue;
                     }
 
-                    using var blobContent = await DownloadBlobAsync(blobUrl);
-                    if (blobContent == null)
+                    (Stream Content, IDictionary<string, string> Metadata) = await DownloadBlobWithMetadataAsync(blobUrl);
+
+                    if (Content != null)
                     {
-                        log.LogError($"Failed to download blob from {blobUrl}. Skipping processing.");
-                        continue;
+                        foreach (var tag in Metadata)
+                        {
+                            Console.WriteLine($"Tag Key: {tag.Key}, Value: {tag.Value}");
+                        }
                     }
 
-                    string extractedText = await PerformOCR(blobContent);
+                    string extractedText = await PerformOCR(Content);
                     log.LogInformation($"Successfully extracted OCR Text: {extractedText}");
 
                     // TODO: Implement saving extracted text to Azure Data Lake or CosmosDB
-                    // await SaveExtractedTextAsync(extractedText);
+                    await SaveToCosmosDb(eventData, extractedText, Metadata);
                 }
                 catch (Exception ex)
                 {
@@ -75,6 +90,43 @@ namespace OCR_AI_Grocery
             }
 
             return string.Empty;
+        }
+
+        private async Task SaveToCosmosDb(EventGridEvent eventData, string extractedText, IDictionary<string, string> metadata)
+        {
+            var receipt = new ReceiptDocument
+            {
+                Id = Guid.NewGuid().ToString(),
+                UserId = metadata.ContainsKey("userId") ? metadata["userId"] : "Unknown",
+                FamilyId = metadata.ContainsKey("familyId") ? metadata["familyId"] : "Unknown", 
+                ReceiptText = extractedText 
+                
+            };
+
+            await _container.CreateItemAsync(receipt, new PartitionKey(receipt.FamilyId));
+            _logger.LogInformation($"Saved receipt to Cosmos DB for user: {receipt.UserId}, family: {receipt.FamilyId}");
+        }
+
+        // Receipt Document Model for Cosmos DB
+        public class ReceiptDocument
+        {
+            [JsonProperty("id")]
+            public string Id { get; set; } = Guid.NewGuid().ToString();  // CosmosDB requires an "id" field
+
+            [JsonProperty("FamilyId")]
+            public string FamilyId { get; set; }  // ✅ Partition Key (MUST MATCH)
+
+            [JsonProperty("UserId")]
+            public string UserId { get; set; }
+
+            [JsonProperty("ReceiptText")]
+            public string ReceiptText { get; set; }
+
+            [JsonProperty("StoreName")]
+            public string StoreName { get; set; }
+
+            [JsonProperty("UploadDate")]
+            public DateTime UploadDate { get; set; } = DateTime.UtcNow;
         }
 
         public class EventGridEvent
@@ -107,7 +159,7 @@ namespace OCR_AI_Grocery
         public class Storagediagnostics
         {
             public string batchId { get; set; }
-        } 
+        }
 
 
         private string ExtractBlobUrl(string eventBody)
@@ -123,20 +175,32 @@ namespace OCR_AI_Grocery
             }
         }
 
-        private async Task<Stream> DownloadBlobAsync(string blobUrl)
+        private async Task<(Stream Content, IDictionary<string, string> Metadata)> DownloadBlobWithMetadataAsync(string blobUrl)
         {
             try
             {
-                var blobClient = new BlobClient(new Uri(blobUrl), new Azure.Identity.DefaultAzureCredential());
+                var blobClient = new BlobClient(new Uri(blobUrl), new DefaultAzureCredential());
+
+                // Download the blob content
                 var response = await blobClient.DownloadStreamingAsync();
-                return response.Value.Content;
+                Stream blobContent = response.Value.Content;
+
+                // Retrieve Blob Metadata
+                var propertiesResponse = await blobClient.GetPropertiesAsync();
+                var metadata = propertiesResponse.Value.Metadata;
+
+                _logger.LogInformation($"✅ Successfully downloaded blob with {metadata.Count} metadata entries.");
+
+                return (blobContent, metadata);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error downloading blob: {ex.Message}");
-                return null;
+                _logger.LogError($"❌ Error downloading blob: {ex.Message}");
+                return (null, null);
             }
         }
+
+
 
         private async Task<string> PerformOCR(Stream imageStream)
         {

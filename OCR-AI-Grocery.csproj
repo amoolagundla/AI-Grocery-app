@@ -14,6 +14,7 @@
 		<!-- Core Azure Functions SDK -->
 		<PackageReference Include="Azure.AI.Vision.ImageAnalysis" Version="1.0.0" />
 		<PackageReference Include="Azure.Messaging.EventHubs" Version="5.11.5" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.46.1" />
 		<PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.0.0" />
 		<PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.EventHubs" Version="6.0.1" />
 		<PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
