@@ -80,7 +80,7 @@ namespace OCR_AI_Grocery
                     log.LogInformation($"Successfully extracted OCR Text: {extractedText}");
 
                     // TODO: Implement saving extracted text to Azure Data Lake or CosmosDB
-                    await SaveToCosmosDb(eventData, extractedText, Metadata);
+                    await SaveToCosmosDb(eventData, extractedText,blobUrl, Metadata);
                 }
                 catch (Exception ex)
                 {
@@ -92,15 +92,15 @@ namespace OCR_AI_Grocery
             return string.Empty;
         }
 
-        private async Task SaveToCosmosDb(EventGridEvent eventData, string extractedText, IDictionary<string, string> metadata)
+        private async Task SaveToCosmosDb(EventGridEvent eventData, string extractedText,string bloblurl, IDictionary<string, string> metadata)
         {
             var receipt = new ReceiptDocument
             {
-                Id = Guid.NewGuid().ToString(),
-                UserId = metadata.ContainsKey("userId") ? metadata["userId"] : "Unknown",
-                FamilyId = metadata.ContainsKey("familyId") ? metadata["familyId"] : "Unknown", 
-                ReceiptText = extractedText 
-                
+                Id = Guid.NewGuid().ToString(),  // Ensure uniqueness based on Blob URL
+                UserId = metadata?.TryGetValue("email", out var userId) == true ? userId : "Unknown",
+                FamilyId = metadata?.TryGetValue("familyId", out var familyId) == true ? familyId : "Unknown",
+                ReceiptText = extractedText,
+                BlobUrl = bloblurl
             };
 
             await _container.CreateItemAsync(receipt, new PartitionKey(receipt.FamilyId));
@@ -127,6 +127,10 @@ namespace OCR_AI_Grocery
 
             [JsonProperty("UploadDate")]
             public DateTime UploadDate { get; set; } = DateTime.UtcNow;
+
+            [JsonProperty("BlobUrl")]
+            public string BlobUrl { get; set; }
+            
         }
 
         public class EventGridEvent
