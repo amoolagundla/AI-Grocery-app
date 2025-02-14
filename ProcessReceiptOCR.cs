@@ -13,6 +13,8 @@ using Azure.Identity;
 using Grpc.Core;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
+using Azure.Messaging.ServiceBus;
+using Azure.Storage.Queues;
 
 namespace OCR_AI_Grocery
 {
@@ -22,21 +24,29 @@ namespace OCR_AI_Grocery
         private readonly CosmosClient _cosmosClient;
         private readonly Container _container;
 
-
+        private   QueueClient _queueClient;
         private const string StorageAccountName = "reciepts"; // Corrected spelling
         private const string ContainerName = "receipts";
 
         // Azure AI Vision Credentials
         private const string VisionEndpoint = "https://reciept-vision.cognitiveservices.azure.com/";
         private const string VisionKey = "EzK1s1e1KwCa3ecEzzG8MnWk7caCsbd698URjSn9NltjqIOkfRQQJQQJ99BBACYeBjFXJ3w3AAAFACOGzB6B";
+        private readonly ServiceBusSender _queueSender;
+        private readonly ServiceBusClient _serviceBusClient;
 
         public ProcessReceiptOCR(ILoggerFactory loggerFactory)
         {
-            _logger = loggerFactory.CreateLogger<ProcessReceiptOCR>();
-
-            string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString");
+            _logger = loggerFactory.CreateLogger<ProcessReceiptOCR>(); 
+            string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString") ?? string.Empty;
             _cosmosClient = new CosmosClient(cosmosDbConnection);
             _container = _cosmosClient.GetContainer("ReceiptsDB", "receipts");
+            string serviceBusConnectionString = Environment.GetEnvironmentVariable("QueueConnectionString")
+                ?? throw new InvalidOperationException("Service Bus connection string not found");
+
+            // Create Service Bus client and sender
+            _serviceBusClient = new ServiceBusClient(serviceBusConnectionString);
+            _queueSender = _serviceBusClient.CreateSender("receipt-analysis-queue");
+ 
         }
 
         [Function("ProcessReceiptOCR")]
@@ -81,6 +91,17 @@ namespace OCR_AI_Grocery
 
                     // TODO: Implement saving extracted text to Azure Data Lake or CosmosDB
                     await SaveToCosmosDb(eventData, extractedText,blobUrl, Metadata);
+
+                    var queueMessage = JsonConvert.SerializeObject(new { userEmail = Metadata?.TryGetValue("email", out var userId) == true ? userId : "Unknown" });
+                    var message = new ServiceBusMessage(Encoding.UTF8.GetBytes(queueMessage))
+                    {
+                        ContentType = "application/json",
+                        Subject = "ReceiptAnalysis",
+                        MessageId = Guid.NewGuid().ToString()
+                    };
+
+                    // Send message to Service Bus queue
+                    await _queueSender.SendMessageAsync(message); 
                 }
                 catch (Exception ex)
                 {
