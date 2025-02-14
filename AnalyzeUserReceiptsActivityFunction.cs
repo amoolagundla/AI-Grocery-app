@@ -120,18 +120,33 @@ namespace OCR_AI_Grocery
         private async Task<Dictionary<string, List<string>>> AnalyzeReceiptsWithOpenAI(List<ProcessedReceipt> receipts)
         {
             var allReceiptsText = string.Join("\n\n", receipts.Select(r => r.ReceiptText));
-            var prompt = $"Analyze the following receipts and group the frequently bought items by store name:\n\n{allReceiptsText}\n\n" +
-                        "Return only valid JSON in the following format without any additional text:\n" +
-                        "{ \"store1\": [\"item1\", \"item2\"], \"store2\": [\"item3\", \"item4\"] }";
+            var prompt = $@"
+                        Analyze the following receipts and categorize each item by mapping the specific product name to its commonly recognized product name. 
+                        For example:
+                        - 'CASCPLATPLUS' should be identified as 'Cascade Dishwasher Pods'.
+                        - 'Diet Coke 12oz' should be identified as 'Diet Coke'.
+                        - 'Tropicana OJ 1L' should be identified as 'Tropicana Orange Juice'.
+                        - 'KelloggsCereal' should be identified as 'Kellogg's Cereal'.
+
+                        Ensure that each product name is mapped to a real-world commonly used product name instead of broad categories like 'grocery' or 'cleaning supplies'.
+
+                        Here are the receipts:\n\n{allReceiptsText}\n\n
+
+                        Return only valid JSON without any additional text in this format:
+                        {{
+                            ""store1"": [""GeneralItem1"", ""GeneralItem2""], 
+                            ""store2"": [""GeneralItem3"", ""GeneralItem4""]
+                        }}";
+
 
             var requestBody = new
             {
                 model = "gpt-4",
                 messages = new[]
                 {
-                new { role = "system", content = "You are a helpful AI assistant that analyzes shopping receipts. Always return valid JSON." },
-                new { role = "user", content = prompt }
-            },
+            new { role = "system", content = "You are a helpful AI assistant that analyzes shopping receipts. Always return valid JSON." },
+            new { role = "user", content = prompt }
+        },
                 max_tokens = 500,
                 temperature = 0.6
             };
