@@ -141,7 +141,7 @@ namespace OCR_AI_Grocery
 
             var requestBody = new
             {
-                model = "gpt-4",
+                model = "gpt-4o-mini",
                 messages = new[]
                 {
             new { role = "system", content = "You are a helpful AI assistant that analyzes shopping receipts. Always return valid JSON." },
