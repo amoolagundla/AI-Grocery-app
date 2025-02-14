@@ -15,12 +15,14 @@ namespace OCR_AI_Grocery
 {
     public class InviteFamilyMemberFunction
     {
+        private readonly ILogger _logger;
         private readonly CosmosClient _cosmosClient;
         private readonly Container _container;
         private readonly Container _familyMembersContainer;
 
-        public InviteFamilyMemberFunction()
+        public InviteFamilyMemberFunction(ILoggerFactory loggerFactory)
         {
+            _logger = loggerFactory.CreateLogger<ProcessReceiptOCR>();
             string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString") ?? string.Empty;
             _cosmosClient = new CosmosClient(cosmosDbConnection);
             _container = _cosmosClient.GetContainer("ReceiptsDB", "FamilyInvites");
@@ -28,34 +30,55 @@ namespace OCR_AI_Grocery
         }
         [Function("InviteFamilyMember")]
         public async Task<IActionResult> InviteFamilyMember(
-            [HttpTrigger(AuthorizationLevel.Function, "post", Route = "family/{familyId}/inviteMember")] HttpRequest req,
-            string familyId,
-            ILogger log)
+    [HttpTrigger(AuthorizationLevel.Function, "post", Route = "family/{familyId}/inviteMember")] HttpRequest req,
+    string FamilyId)
         {
-            var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            var data = JsonConvert.DeserializeObject<dynamic>(requestBody);
-
-            string invitedUserEmail = data?.email??string.Empty;
-            string invitedBy = data?.invitedBy ?? string.Empty;
-
-            if (string.IsNullOrEmpty(invitedUserEmail) || string.IsNullOrEmpty(invitedBy))
+            try
             {
-                return new BadRequestObjectResult(new { message = "Email and inviter details are required." });
+                var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+                var data = JsonConvert.DeserializeObject<dynamic>(requestBody);
+
+                string invitedUserEmail = data?.email ?? string.Empty;
+                string invitedBy = data?.invitedBy ?? string.Empty;
+                if (string.IsNullOrEmpty(invitedUserEmail) || string.IsNullOrEmpty(invitedBy))
+                    return new BadRequestObjectResult(new { message = "Email and inviter details are required." });
+
+                var query = new QueryDefinition("SELECT * FROM c WHERE c.FamilyId = @familyId AND c.invitedUserEmail = @invitedUserEmail")
+                    .WithParameter("@familyId", FamilyId)
+                    .WithParameter("@invitedUserEmail", invitedUserEmail.ToLower());
+
+                using var queryIterator = _container.GetItemQueryIterator<dynamic>(query);
+                while (queryIterator.HasMoreResults)
+                {
+                    var response = await queryIterator.ReadNextAsync();
+                    if (response.Count > 0)
+                        return new ConflictObjectResult(new { message = "Invite already sent." });
+                }
+
+                var invite = new
+                {
+                    id = Guid.NewGuid().ToString(),
+                    FamilyId,
+                    invitedUserEmail = invitedUserEmail.ToLower(),
+                    invitedBy = invitedBy.ToLower(),
+                    status = "pending"
+                };
+
+                await _container.CreateItemAsync(invite, new PartitionKey(FamilyId));
+                return new OkObjectResult(new { message = "Invitation sent!", inviteId = invite.id });
             }
-
-            var invite = new
+            catch (CosmosException ex)
             {
-                id = Guid.NewGuid().ToString(),
-                familyId = familyId,
-                invitedUserEmail = invitedUserEmail,
-                invitedBy = invitedBy,
-                status = "pending"
-            };
-
-            await _container.CreateItemAsync(invite, new PartitionKey(invitedUserEmail));
-
-            return new OkObjectResult(new { message = "Invitation sent!", inviteId = invite.id });
+                _logger.LogError($"CosmosDB Error: {ex.Message}");
+                return new StatusCodeResult((int)ex.StatusCode);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error sending invite: {ex.Message}");
+                return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+            }
         }
+
 
         [Function("GetPendingInvites")]
         public async Task<IActionResult> GetPendingInvites(
