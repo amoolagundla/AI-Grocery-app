@@ -34,7 +34,7 @@ namespace OCR_AI_Grocery
 
         [Function("CreateFamilyId")]
         public async Task<HttpResponseData> Run(
-            [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req)
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequestData req)
         {
             try
             {

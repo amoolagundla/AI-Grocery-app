@@ -30,7 +30,7 @@ namespace OCR_AI_Grocery
         }
         [Function("InviteFamilyMember")]
         public async Task<IActionResult> InviteFamilyMember(
-    [HttpTrigger(AuthorizationLevel.Function, "post", Route = "family/{familyId}/inviteMember")] HttpRequest req,
+    [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "family/{familyId}/inviteMember")] HttpRequest req,
     string FamilyId)
         {
             try
@@ -82,7 +82,7 @@ namespace OCR_AI_Grocery
 
         [Function("GetPendingInvites")]
         public async Task<IActionResult> GetPendingInvites(
-    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "family/invites/{email}")] HttpRequest req,
+    [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "family/invites/{email}")] HttpRequest req,
     string email,
     ILogger log)
         {
@@ -105,7 +105,7 @@ namespace OCR_AI_Grocery
 
         [Function("RejectFamilyInvite")]
         public async Task<IActionResult> RejectFamilyInvite(
-    [HttpTrigger(AuthorizationLevel.Function, "post", Route = "family/invites/{inviteId}/reject")] HttpRequest req,
+    [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "family/invites/{inviteId}/reject")] HttpRequest req,
     string inviteId,
     ILogger log)
         {
@@ -126,7 +126,7 @@ namespace OCR_AI_Grocery
 
         [Function("AcceptFamilyInvite")]
         public async Task<IActionResult> AcceptFamilyInvite(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "family/invites/{inviteId}/accept")] HttpRequest req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "family/invites/{inviteId}/accept")] HttpRequest req,
         string inviteId,
         ILogger log)
         {

@@ -29,7 +29,7 @@ namespace OCR_AI_Grocery
 
         [Function("AddFamilyMember")]
         public async Task<IActionResult> AddFamilyMember(
-            [HttpTrigger(AuthorizationLevel.Function, "post", Route = "family/{familyId}/addMember")] HttpRequest req,
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "family/{familyId}/addMember")] HttpRequest req,
             string familyId,
             ILogger log)
         {
@@ -85,7 +85,7 @@ namespace OCR_AI_Grocery
         }
 
         [Function("GetFamilyByEmail")]
-        public async Task<IActionResult> GetFamilyByEmail([HttpTrigger(AuthorizationLevel.Function, "get", Route = "family/get/{email}")] HttpRequest req,
+        public async Task<IActionResult> GetFamilyByEmail([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "family/get/{email}")] HttpRequest req,
                                                          string email,
                                                          ILogger log)
         {

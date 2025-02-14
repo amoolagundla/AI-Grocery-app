@@ -31,7 +31,7 @@ namespace OCR_AI_Grocery
 
         [Function("GetUploadedReceipts")]
         public async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "receipts")] HttpRequestData req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "receipts")] HttpRequestData req)
         {
             try
             {
