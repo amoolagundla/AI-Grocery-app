@@ -117,11 +117,14 @@ namespace OCR_AI_Grocery
         {
             var receipt = new ReceiptDocument
             {
-                Id = Guid.NewGuid().ToString(),  // Ensure uniqueness based on Blob URL
+                Id = Guid.NewGuid().ToString(),  // Ensure uniqueness
                 UserId = metadata?.TryGetValue("email", out var userId) == true ? userId : "Unknown",
                 FamilyId = metadata?.TryGetValue("familyId", out var familyId) == true ? familyId : "Unknown",
                 ReceiptText = extractedText,
-                BlobUrl = bloblurl
+                BlobUrl = bloblurl,
+                UploadDate = DateTime.UtcNow,
+                StoreName = "Unknown", // Will be updated later
+                PurchasedDate = DateTime.UtcNow // Placeholder until AI extracts the real date
             };
 
             await _container.CreateItemAsync(receipt, new PartitionKey(receipt.FamilyId));
@@ -151,7 +154,7 @@ namespace OCR_AI_Grocery
 
             [JsonProperty("BlobUrl")]
             public string BlobUrl { get; set; }
-            
+            public DateTime PurchasedDate { get; internal set; }
         }
 
         public class EventGridEvent

@@ -16,6 +16,8 @@ using Newtonsoft.Json;
 using Azure.Messaging.ServiceBus;
 using Azure.Storage.Queues;
 using static Microsoft.ApplicationInsights.MetricDimensionNames.TelemetryContext;
+using static OCR_AI_Grocery.ProcessReceiptOCR;
+using OCR_AI_Grocery.services;
 
 namespace OCR_AI_Grocery
 {
@@ -29,22 +31,24 @@ namespace OCR_AI_Grocery
         private readonly ILogger _logger;
         private readonly ServiceBusSender _queueSender;
         private readonly ServiceBusClient _serviceBusClient;
-
+        private CleanJsonResponseHelper cleanJsonResponseHelper;
         public AnalyzeUserReceiptsActivityFunction(ILoggerFactory loggerFactory, HttpClient httpClient)
         {
 
             string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString") ?? string.Empty;
             _cosmosClient = new CosmosClient(cosmosDbConnection);
-            _logger = loggerFactory.CreateLogger<AnalyzeUserReceiptsActivityFunction>(); 
+            _logger = loggerFactory.CreateLogger<AnalyzeUserReceiptsActivityFunction>();
             _receiptsContainer = _cosmosClient.GetContainer("ReceiptsDB", "receipts");
             _shoppingListContainer = _cosmosClient.GetContainer("ReceiptsDB", "ShoppingLists");
+            _container = _cosmosClient.GetContainer("ReceiptsDB", "receipts");
             string serviceBusConnectionString = Environment.GetEnvironmentVariable("QueueConnectionString")
                 ?? throw new InvalidOperationException("Service Bus connection string not found");
 
             // Create Service Bus client and sender
             _serviceBusClient = new ServiceBusClient(serviceBusConnectionString);
             _queueSender = _serviceBusClient.CreateSender("receipt-analysis-queue");
-          _httpClient = httpClient;
+            _httpClient = httpClient;
+            cleanJsonResponseHelper = new CleanJsonResponseHelper(loggerFactory);
         }
 
         [Function("AnalyzeUserReceiptsActivityFunction")]
@@ -52,34 +56,30 @@ namespace OCR_AI_Grocery
             [ServiceBusTrigger("receipt-analysis-queue", Connection = "QueueConnectionString")] ServiceBusReceivedMessage message,
             FunctionContext context)
         {
-           
+
 
             try
             {
                 _logger.LogInformation("📩 Received Message ID: {MessageId}", message.MessageId);
-                _logger.LogInformation("📄 Message Body: {Body}", message.Body.ToString());
-
                 var receiptMessage = JsonConvert.DeserializeObject<ReceiptAnalysisMessage>(message.Body.ToString());
                 string userEmail = receiptMessage?.UserEmail ?? string.Empty;
 
                 if (string.IsNullOrEmpty(userEmail))
                 {
-                    _logger.LogError("🚨 Invalid queue message: UserEmail is missing.");
+                    _logger.LogError("🚨 Missing UserEmail in queue message.");
                     return;
                 }
 
-                _logger.LogInformation("🔍 Analyzing receipts for user: {UserEmail}", userEmail);
-
-                // Fetch user's receipts from Cosmos DB
+                // 🔍 Fetch receipts for this user
                 var query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userEmail")
                     .WithParameter("@userEmail", userEmail);
 
-                var receipts = new List<ProcessedReceipt>();
+                var receipts = new List<ReceiptDocument>();
 
-                using FeedIterator<ProcessedReceipt> queryIterator = _receiptsContainer.GetItemQueryIterator<ProcessedReceipt>(query);
+                using FeedIterator<ReceiptDocument> queryIterator = _receiptsContainer.GetItemQueryIterator<ReceiptDocument>(query);
                 while (queryIterator.HasMoreResults)
                 {
-                    FeedResponse<ProcessedReceipt> response = await queryIterator.ReadNextAsync();
+                    FeedResponse<ReceiptDocument> response = await queryIterator.ReadNextAsync();
                     receipts.AddRange(response);
                 }
 
@@ -89,16 +89,16 @@ namespace OCR_AI_Grocery
                     return;
                 }
 
-                // 🔄 Group receipts by store name using OpenAI
+                // 🔄 Analyze receipts with OpenAI
                 var groupedItems = await AnalyzeReceiptsWithOpenAI(receipts);
 
                 if (groupedItems == null || groupedItems.Count == 0)
                 {
-                    _logger.LogWarning("⚠️ No relevant shopping list data extracted for {UserEmail}", userEmail);
+                    _logger.LogWarning("⚠️ No shopping list data extracted.");
                     return;
                 }
 
-                // 🛒 Store analysis results in CosmosDB
+                // 🛒 Store analysis results and update original receipts
                 var shoppingList = new ShoppingList
                 {
                     Id = userEmail,
@@ -109,52 +109,87 @@ namespace OCR_AI_Grocery
 
                 await _shoppingListContainer.UpsertItemAsync(shoppingList, new PartitionKey(shoppingList.UserId));
 
-                _logger.LogInformation("✅ Shopping list stored successfully for {UserEmail}", userEmail);
+                // 🔄 Update each receipt with StoreName & PurchasedDate
+                foreach (var store in groupedItems)
+                {
+                    string storeName = store.Key;
+                    foreach (var item in store.Value)
+                    {
+                        var receiptToUpdate = receipts.FirstOrDefault(r => r.ReceiptText.Contains(item));
+                        if (receiptToUpdate != null)
+                        {
+                            receiptToUpdate.StoreName = storeName;
+                            receiptToUpdate.PurchasedDate = DateTime.UtcNow; // Adjust if AI extracts an actual date
+
+                            await _receiptsContainer.ReplaceItemAsync(receiptToUpdate, receiptToUpdate.Id, new PartitionKey(receiptToUpdate.FamilyId));
+                            _logger.LogInformation($"✅ Updated receipt {receiptToUpdate.Id} with Store: {storeName}");
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error in AnalyzeReceipt function");
+                _logger.LogError(ex, "❌ Error processing receipts.");
             }
         }
 
-        private async Task<Dictionary<string, List<string>>> AnalyzeReceiptsWithOpenAI(List<ProcessedReceipt> receipts)
+        private async Task<Dictionary<string, List<string>>> AnalyzeReceiptsWithOpenAI(List<ReceiptDocument> receipts)
         {
             var allReceiptsText = string.Join("\n\n", receipts.Select(r => r.ReceiptText));
+
             var prompt = $@"
-                        Analyze the following receipts and categorize each item by mapping the specific product name to its commonly recognized product name. 
-                        For example:
-                        - 'CASCPLATPLUS' should be identified as 'Cascade Dishwasher Pods'.
-                        - 'Diet Coke 12oz' should be identified as 'Diet Coke'.
-                        - 'Tropicana OJ 1L' should be identified as 'Tropicana Orange Juice'.
-                        - 'KelloggsCereal' should be identified as 'Kellogg's Cereal'.
+        Analyze these receipts and create a structured shopping list. Follow these rules exactly:
 
-                        Ensure that each product name is mapped to a real-world commonly used product name instead of broad categories like 'grocery' or 'cleaning supplies'.
+        1. Format store names:
+           - Replace apostrophes with 's' (Braum's → Braums)
+           - Remove special characters
+           - Example: 'Sam's Club' → 'Sams Club'
 
-                        Here are the receipts:\n\n{allReceiptsText}\n\n
+        2. Format item names:
+           - Expand abbreviations
+           - Use common names
+           - Examples:
+             'CASCPLATPLUS' → 'Cascade Platinum Plus'
+             'OJ' → 'Orange Juice'
 
-                        Return only valid JSON without any additional text in this format:
-                        {{
-                            ""store1"": [""GeneralItem1"", ""GeneralItem2""], 
-                            ""store2"": [""GeneralItem3"", ""GeneralItem4""]
-                        }}";
+        3. Return ONLY valid JSON in this exact format:
+        {{
+            ""Walmart"": [
+                ""Milk"",
+                ""Bread"",
+                ""Eggs""
+            ],
+            ""Costco Wholesale"": [
+                ""Paper Towels"",
+                ""Orange Juice"",
+                ""Chicken Breast""
+            ]
+        }}
 
+        Do not include:
+        - Prices
+        - Quantities
+        - Extra text or explanations
+        - Markdown formatting
+
+        Receipts to analyze:
+        {allReceiptsText}";
 
             var requestBody = new
             {
                 model = "gpt-4o-mini",
                 messages = new[]
                 {
-            new { role = "system", content = "You are a helpful AI assistant that analyzes shopping receipts. Always return valid JSON." },
+            new { role = "system", content = "You are a precise JSON formatter. Return only valid JSON without any additional text or explanations." },
             new { role = "user", content = prompt }
         },
                 max_tokens = 500,
-                temperature = 0.6
+                temperature = 0.3  // Lower temperature for more consistent formatting
             };
 
             var jsonRequest = JsonConvert.SerializeObject(requestBody);
             var content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
 
-            // Get OpenAI API Key
             string openAiApiKey = Environment.GetEnvironmentVariable("OpenAI_API_Key")
                 ?? throw new InvalidOperationException("OpenAI API Key not found");
 
@@ -171,7 +206,6 @@ namespace OCR_AI_Grocery
                 return new Dictionary<string, List<string>>();
             }
 
-            // Parse the OpenAI response
             var openAIResponse = JsonConvert.DeserializeObject<OpenAIResponse>(responseString);
             if (openAIResponse?.Choices == null || !openAIResponse.Choices.Any())
             {
@@ -180,20 +214,13 @@ namespace OCR_AI_Grocery
             }
 
             var aiGeneratedText = openAIResponse.Choices[0].Message.Content;
-            _logger.LogInformation($"AI Generated Text: {aiGeneratedText}");
-
-            // Try to clean and parse the JSON response
-            aiGeneratedText = CleanJsonResponse(aiGeneratedText);
+            _logger.LogInformation($"🤖 AI Generated Text: {aiGeneratedText}");
 
             try
             {
+                // Should now be clean JSON without need for additional cleaning
                 var result = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(aiGeneratedText);
-                if (result == null)
-                {
-                    _logger.LogError("❌ Failed to deserialize AI response to dictionary");
-                    return new Dictionary<string, List<string>>();
-                }
-                return result;
+                return result ?? new Dictionary<string, List<string>>();
             }
             catch (JsonException ex)
             {
@@ -218,36 +245,8 @@ namespace OCR_AI_Grocery
 
             [JsonProperty("choices")]
             public List<Choice> Choices { get; set; } = new List<Choice>();
-        }
+        } 
 
-        private string CleanJsonResponse(string response)
-        {
-            try
-            {
-                // Remove any text before the first {
-                var startIndex = response.IndexOf('{');
-                var endIndex = response.LastIndexOf('}');
-
-                if (startIndex == -1 || endIndex == -1)
-                {
-                    _logger.LogWarning("❌ Could not find valid JSON markers in response");
-                    return "{}";
-                }
-
-                // Extract just the JSON part
-                response = response.Substring(startIndex, endIndex - startIndex + 1);
-
-                // Replace single quotes with double quotes if present
-                response = response.Replace('\'', '"');
-
-                return response;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"❌ Error cleaning JSON response: {ex.Message}");
-                return "{}";
-            }
-        }
     }
 
     // 📨 Service Bus Message Model
@@ -276,5 +275,6 @@ namespace OCR_AI_Grocery
         public string ReceiptText { get; set; }
         public string StoreName { get; set; }
         public DateTime CreatedAt { get; set; }
+        public DateTime PurchasedDate { get; set; }
     }
 }
