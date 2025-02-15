@@ -101,7 +101,9 @@ namespace OCR_AI_Grocery
                     };
 
                     // Send message to Service Bus queue
-                    await _queueSender.SendMessageAsync(message); 
+                    await _queueSender.SendMessageAsync(message);
+
+                    log.LogInformation($"Successfully SendMessageAsync to queue  ");
                 }
                 catch (Exception ex)
                 {
