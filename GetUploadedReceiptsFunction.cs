@@ -47,8 +47,8 @@ namespace OCR_AI_Grocery
                 if (!string.IsNullOrEmpty(userEmail))
                 {
                     // ✅ Filter receipts for a specific user
-                    query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userEmail")
-                        .WithParameter("@userEmail", userEmail);
+                    query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userEmail ORDER BY c._ts DESC")
+                                                .WithParameter("@userEmail", userEmail);
                 }
                 else
                 {
