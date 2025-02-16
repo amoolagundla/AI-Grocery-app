@@ -149,8 +149,8 @@ namespace OCR_AI_Grocery
            - Expand abbreviations
            - Use common names
            - Examples:
-             'CASCPLATPLUS' → 'Cascade Platinum Plus'
-             'OJ' → 'Orange Juice'
+             'CASCPLATPLUS' → 'Cascade Platinum Plus -- with company name if available'
+             'OJ' → 'Orange Juice  -- with company name if available'
 
         3. Return ONLY valid JSON in this exact format:
         {{
@@ -219,7 +219,7 @@ namespace OCR_AI_Grocery
             try
             {
                 // Should now be clean JSON without need for additional cleaning
-                var result = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(aiGeneratedText);
+                 var result = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(aiGeneratedText);
                 return result ?? new Dictionary<string, List<string>>();
             }
             catch (JsonException ex)
