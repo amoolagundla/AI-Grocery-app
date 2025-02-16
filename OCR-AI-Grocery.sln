@@ -5,8 +5,6 @@ VisualStudioVersion = 17.10.34916.146
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OCR-AI-Grocery", "OCR-AI-Grocery.csproj", "{CEE622EB-DFA1-4843-9792-9BF218806692}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OCR-AI-Grocery-Tests", "..\OCR-AI-Grocery-Tests\OCR-AI-Grocery-Tests.csproj", "{BD6A7E10-0E2C-4D5D-89B8-CE584C0407AB}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -17,10 +15,6 @@ Global
 		{CEE622EB-DFA1-4843-9792-9BF218806692}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CEE622EB-DFA1-4843-9792-9BF218806692}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{CEE622EB-DFA1-4843-9792-9BF218806692}.Release|Any CPU.Build.0 = Release|Any CPU
-		{BD6A7E10-0E2C-4D5D-89B8-CE584C0407AB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{BD6A7E10-0E2C-4D5D-89B8-CE584C0407AB}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{BD6A7E10-0E2C-4D5D-89B8-CE584C0407AB}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{BD6A7E10-0E2C-4D5D-89B8-CE584C0407AB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
