@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace OCR_AI_Grocery.models
 {
     public class FamilyInvite
-    {
+    { 
         [JsonProperty("id")]
         public string InviteId { get; set; } = string.Empty;
 
@@ -16,5 +16,6 @@ namespace OCR_AI_Grocery.models
         public string InvitedUserEmail { get; set; } = string.Empty;
         public string Status { get; set; } = "pending"; // Default status is "pending"
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime ResponseDate { get; set; } = DateTime.UtcNow;
     }
 }
