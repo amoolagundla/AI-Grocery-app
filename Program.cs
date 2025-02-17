@@ -11,9 +11,9 @@ var host = new HostBuilder()
         services.AddCors(options =>
         {
             options.AddDefaultPolicy(builder =>
-                builder.AllowAnyOrigin()  // ✅ Allows all origins, change if needed
-                       .AllowAnyMethod()  // ✅ Allows all HTTP methods (GET, POST, etc.)
-                       .AllowAnyHeader()  // ✅ Allows all headers
+                builder.WithOrigins("http://localhost:4200")  // 👈 Specify your allowed localhost
+                       .AllowAnyMethod()  // Allows all HTTP methods (GET, POST, etc.)
+                       .AllowAnyHeader()  // Allows all headers
             );
         });
 
@@ -21,3 +21,4 @@ var host = new HostBuilder()
     .Build();
 
 host.Run();
+ 
