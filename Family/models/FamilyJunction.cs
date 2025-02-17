@@ -12,7 +12,7 @@ namespace OCR_AI_Grocery.Family.models
         [JsonProperty("id")]
         public string Id { get; set; } = string.Empty; // Email as ID
 
-        [JsonProperty("familyId")]
+        [JsonProperty("FamilyId")]
         public string FamilyId { get; set; } = string.Empty;
 
         [JsonProperty("email")]

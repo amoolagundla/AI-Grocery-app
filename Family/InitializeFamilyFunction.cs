@@ -4,7 +4,10 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using OCR_AI_Grocery.Family.models; 
+using OCR_AI_Grocery.Family.models;
+using OCR_AI_Grocery.models;
+using System;
+using System.Threading.Tasks;
 
 namespace OCR_AI_Grocery
 {
@@ -21,6 +24,7 @@ namespace OCR_AI_Grocery
             string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString") ?? string.Empty;
             _cosmosClient = new CosmosClient(cosmosDbConnection);
 
+            // Create container with FamilyId as partition key
             _familyContainer = _cosmosClient.GetContainer("ReceiptsDB", "Families");
             _familyJunctionContainer = _cosmosClient.GetContainer("ReceiptsDB", "FamilyJunction");
         }
@@ -60,32 +64,34 @@ namespace OCR_AI_Grocery
                     });
                 }
 
-                // Create new family
-                var familyId = Guid.NewGuid().ToString();
+                // Create new family with FamilyId
+                var FamilyId = Guid.NewGuid().ToString();
                 var family = new FamilyEntity
                 {
-                    Id = familyId,
+                    Id = FamilyId,
+                    FamilyId = FamilyId, // Add FamilyId field
                     FamilyName = $"{email.Split('@')[0]}'s Family",
                     PrimaryEmail = email
                 };
 
-                await _familyContainer.CreateItemAsync(family, new PartitionKey(familyId));
+                // Use FamilyId as partition key
+                await _familyContainer.CreateItemAsync(family, new PartitionKey(family.FamilyId));
 
                 // Create family junction
                 var junction = new FamilyJunction
                 {
                     Id = email,
                     Email = email,
-                    FamilyId = familyId
+                    FamilyId = FamilyId
                 };
 
-                await _familyJunctionContainer.CreateItemAsync(junction, new PartitionKey(familyId));
+                await _familyJunctionContainer.CreateItemAsync(junction, new PartitionKey(FamilyId));
 
-                _logger.LogInformation($"Created new family with ID {familyId} for {email}");
+                _logger.LogInformation($"Created new family with ID {FamilyId} for {email}");
 
                 return new OkObjectResult(new
                 {
-                    familyId = familyId,
+                    familyId = FamilyId,
                     isNew = true
                 });
             }
