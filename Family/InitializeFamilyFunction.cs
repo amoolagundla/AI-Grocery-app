@@ -23,8 +23,6 @@ namespace OCR_AI_Grocery
             _logger = loggerFactory.CreateLogger<InitializeFamilyFunction>();
             string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString") ?? string.Empty;
             _cosmosClient = new CosmosClient(cosmosDbConnection);
-
-            // Create container with FamilyId as partition key
             _familyContainer = _cosmosClient.GetContainer("ReceiptsDB", "Families");
             _familyJunctionContainer = _cosmosClient.GetContainer("ReceiptsDB", "FamilyJunction");
         }
@@ -44,37 +42,46 @@ namespace OCR_AI_Grocery
                 }
 
                 var email = data.Email.ToLower();
-                _logger.LogInformation($"Initializing family for user: {email}");
+                _logger.LogInformation($"Checking family status for user: {email}");
 
-                // Check if user already has a family
-                var query = new QueryDefinition(
-                    "SELECT * FROM c WHERE c.Email = @email")
-                    .WithParameter("@email", email);
-
-                using var iterator = _familyJunctionContainer.GetItemQueryIterator<FamilyJunction>(query);
-                var response = await iterator.ReadNextAsync();
-
-                if (response.Count > 0)
+                // First, check FamilyJunction for existing membership
+                var existingFamilyId = await CheckExistingFamilyMembership(email);
+                if (!string.IsNullOrEmpty(existingFamilyId))
                 {
-                    var existingFamily = response.First();
+                    _logger.LogInformation($"Found existing family membership for {email}: {existingFamilyId}");
                     return new OkObjectResult(new
                     {
-                        familyId = existingFamily.FamilyId,
+                        familyId = existingFamilyId,
                         isNew = false
                     });
                 }
 
-                // Create new family with FamilyId
-                var FamilyId = Guid.NewGuid().ToString();
+                // Then check if user has a family where they are the primary contact
+                var existingPrimaryFamily = await CheckExistingPrimaryFamily(email);
+                if (existingPrimaryFamily != null)
+                {
+                    _logger.LogInformation($"Found existing primary family for {email}: {existingPrimaryFamily.FamilyId}");
+
+                    // Ensure junction exists
+                    await EnsureFamilyJunction(email, existingPrimaryFamily.FamilyId);
+
+                    return new OkObjectResult(new
+                    {
+                        familyId = existingPrimaryFamily.FamilyId,
+                        isNew = false
+                    });
+                }
+
+                // If no existing family found, create new one
+                var newFamilyId = Guid.NewGuid().ToString();
                 var family = new FamilyEntity
                 {
-                    Id = FamilyId,
-                    FamilyId = FamilyId, // Add FamilyId field
+                    Id = newFamilyId,
+                    FamilyId = newFamilyId,
                     FamilyName = $"{email.Split('@')[0]}'s Family",
                     PrimaryEmail = email
                 };
 
-                // Use FamilyId as partition key
                 await _familyContainer.CreateItemAsync(family, new PartitionKey(family.FamilyId));
 
                 // Create family junction
@@ -82,16 +89,16 @@ namespace OCR_AI_Grocery
                 {
                     Id = email,
                     Email = email,
-                    FamilyId = FamilyId
+                    FamilyId = newFamilyId
                 };
 
-                await _familyJunctionContainer.CreateItemAsync(junction, new PartitionKey(FamilyId));
+                await _familyJunctionContainer.CreateItemAsync(junction, new PartitionKey(newFamilyId));
 
-                _logger.LogInformation($"Created new family with ID {FamilyId} for {email}");
+                _logger.LogInformation($"Created new family with ID {newFamilyId} for {email}");
 
                 return new OkObjectResult(new
                 {
-                    familyId = FamilyId,
+                    familyId = newFamilyId,
                     isNew = true
                 });
             }
@@ -101,5 +108,63 @@ namespace OCR_AI_Grocery
                 return new StatusCodeResult(StatusCodes.Status500InternalServerError);
             }
         }
-    } 
+
+        private async Task<string> CheckExistingFamilyMembership(string email)
+        {
+            var query = new QueryDefinition(
+                "SELECT c.FamilyId FROM c WHERE c.email = @email")
+                .WithParameter("@email", email);
+
+            using var iterator = _familyJunctionContainer.GetItemQueryIterator<dynamic>(query);
+
+            if (iterator.HasMoreResults)
+            {
+                var response = await iterator.ReadNextAsync();
+                if (response.Count > 0)
+                {
+                    return response.First().FamilyId.ToString();
+                }
+            }
+
+            return null;
+        }
+
+        private async Task<FamilyEntity> CheckExistingPrimaryFamily(string email)
+        {
+            var query = new QueryDefinition(
+                "SELECT * FROM c WHERE c.PrimaryEmail = @email")
+                .WithParameter("@email", email);
+
+            using var iterator = _familyContainer.GetItemQueryIterator<FamilyEntity>(query);
+
+            if (iterator.HasMoreResults)
+            {
+                var response = await iterator.ReadNextAsync();
+                return response.FirstOrDefault();
+            }
+
+            return null;
+        }
+
+        private async Task EnsureFamilyJunction(string email, string familyId)
+        {
+            try
+            {
+                var junction = new FamilyJunction
+                {
+                    Id = email,
+                    Email = email,
+                    FamilyId = familyId
+                };
+
+                await _familyJunctionContainer.CreateItemAsync(junction, new PartitionKey(familyId));
+                _logger.LogInformation($"Created missing junction for existing family: {email} -> {familyId}");
+            }
+            catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                // Junction already exists, which is fine
+                _logger.LogInformation($"Junction already exists for: {email} -> {familyId}");
+            }
+        }
+    }
 }
