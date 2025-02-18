@@ -46,7 +46,7 @@ namespace OCR_AI_Grocery
                 _logger.LogInformation($"Fetching families for email: {email}");
 
                 var query = new QueryDefinition(
-                    "SELECT * FROM c WHERE c.Email = @email")
+                    "SELECT * FROM c WHERE c.InvitedUserEmail = @email")
                     .WithParameter("@email", email.ToLower());
 
                 var families = new List<FamilyEntity>();
@@ -109,7 +109,7 @@ namespace OCR_AI_Grocery
 
                 // Check for existing pending invite
                 var query = new QueryDefinition(
-                    "SELECT * FROM c WHERE c.invitedUserEmail = @email AND c.familyId = @familyId AND c.status = 'pending'")
+                    "SELECT * FROM c WHERE c.InvitedUserEmail = @email AND c.familyId = @familyId AND c.status = 'pending'")
                     .WithParameter("@email", invitedUserEmail)
                     .WithParameter("@familyId", familyId);
 
@@ -128,9 +128,7 @@ namespace OCR_AI_Grocery
                     InviteId = invitedBy,
                     Status = "pending",
                     CreatedAt = DateTime.UtcNow
-                };
-
-                await _invitesContainer.CreateItemAsync(invite, new PartitionKey(familyId));
+                }; 
 
                 return new OkObjectResult(new { message = "Invitation sent successfully." });
             }
