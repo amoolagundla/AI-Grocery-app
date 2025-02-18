@@ -2,13 +2,16 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.WebJobs;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using OCR_AI_Grocery.Family.models;
 using OCR_AI_Grocery.models;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Threading.Tasks;
+using Container = Microsoft.Azure.Cosmos.Container;
 using FamilyInvite = OCR_AI_Grocery.models.FamilyInvite;
 
 namespace OCR_AI_Grocery
@@ -83,7 +86,7 @@ namespace OCR_AI_Grocery
                 return new StatusCodeResult(StatusCodes.Status500InternalServerError);
             }
         }
-         
+
 
         // POST /api/family/{familyId}/inviteMember
         [Function("InviteFamilyMember")]
@@ -205,6 +208,61 @@ namespace OCR_AI_Grocery
             {
                 _logger.LogError($"Error processing invite: {ex.Message}");
                 return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+            }
+        }
+
+        [Function("GetFamilyDetails")]
+        public async Task<IActionResult> Run(
+           [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "family/{id}")] HttpRequest req,
+           string id,
+           ILogger log)
+        {
+            try
+            {
+                QueryDefinition query = new QueryDefinition(
+           "SELECT * FROM c WHERE c.id = @id")
+           .WithParameter("@id", id);
+
+                var families = new List<FamilyEntity>();
+
+                using var iterator = _familyContainer.GetItemQueryIterator<FamilyJunction>(query);
+                while (iterator.HasMoreResults)
+                {
+                    var response = await iterator.ReadNextAsync();
+                    foreach (var junction in response)
+                    {
+                        try
+                        {
+                            var family = await _familyContainer.ReadItemAsync<FamilyEntity>(
+                                junction.FamilyId,
+                                new PartitionKey(junction.FamilyId)
+                            );
+
+                            families.Add(new FamilyEntity
+                            {
+                                Id = family.Resource.Id,
+                                FamilyName = family.Resource.FamilyName,
+                                PrimaryEmail = family.Resource.PrimaryEmail
+                            });
+                        }
+                        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                        {
+                            log.LogWarning($"Family not found for junction: {junction.FamilyId}");
+                            continue;
+                        }
+                    }
+                }
+
+                return new OkObjectResult(families);
+            }
+            catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return new NotFoundObjectResult($"Family with ID {id} not found");
+            }
+            catch (Exception ex)
+            {
+                log.LogError($"Error retrieving family: {ex.Message}");
+                return new StatusCodeResult(500);
             }
         }
     }
