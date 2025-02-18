@@ -34,7 +34,7 @@ namespace OCR_AI_Grocery
                 _logger.LogInformation($"Fetching invites for email: {email}");
 
                 var query = new QueryDefinition(
-                    "SELECT * FROM c WHERE c.InvitedUserEmail = @email AND c.status = 'pending'")
+                    "SELECT * FROM c WHERE c.InvitedUserEmail = @email AND c.Status = 'pending'")
                     .WithParameter("@email", email.ToLower());
 
                 var invites = new List<FamilyInvite>();
