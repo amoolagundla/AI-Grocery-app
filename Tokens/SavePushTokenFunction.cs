@@ -5,6 +5,9 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Text.Json;
+using System.Threading.Tasks;
+using System.IO;
+using System.Linq;
 
 namespace OCR_AI_Grocery.Tokens
 {
@@ -12,7 +15,7 @@ namespace OCR_AI_Grocery.Tokens
     {
         private readonly CosmosClient _cosmosClient;
         private readonly Container _container;
-        private readonly ILogger _logger; 
+        private readonly ILogger _logger;
 
         public SavePushTokenFunction(ILoggerFactory logger)
         {
@@ -42,41 +45,41 @@ namespace OCR_AI_Grocery.Tokens
                 // Normalize email
                 tokenRequest.UserEmail = tokenRequest.UserEmail.ToLowerInvariant();
 
-                // Check if token already exists using partition key
+                // Check if a token already exists for this UserEmail
                 var query = new QueryDefinition(
-                    "SELECT * FROM c WHERE c.Token = @token")
-                    .WithParameter("@token", tokenRequest.Token);
+                    "SELECT * FROM c WHERE c.UserEmail = @userEmail")
+                    .WithParameter("@userEmail", tokenRequest.UserEmail);
 
                 var queryOptions = new QueryRequestOptions
                 {
                     PartitionKey = new PartitionKey(tokenRequest.UserEmail)
                 };
 
-                using var iterator = _container.GetItemQueryIterator<PushTokenDocument>(
-                    query,
-                    requestOptions: queryOptions
-                );
+                using var iterator = _container.GetItemQueryIterator<PushTokenDocument>(query, requestOptions: queryOptions);
 
                 if (iterator.HasMoreResults)
                 {
                     var response = await iterator.ReadNextAsync();
-                    if (response.Count > 0)
+                    var existingToken = response.FirstOrDefault();
+
+                    if (existingToken != null)
                     {
-                        // Update existing token's LastUpdated
-                        var existingToken = response.First();
+                        // Update token and timestamp
+                        existingToken.Token = tokenRequest.Token;
                         existingToken.LastUpdated = DateTime.UtcNow;
+
                         await _container.ReplaceItemAsync(
                             existingToken,
                             existingToken.id,
                             new PartitionKey(existingToken.UserEmail)
                         );
 
-                        _logger.LogInformation($"✅ Updated existing token for {tokenRequest.UserEmail}");
+                        _logger.LogInformation($"✅ Updated push token for {tokenRequest.UserEmail}");
                         return new OkObjectResult(new { message = "Token updated successfully" });
                     }
                 }
 
-                // Create new token document
+                // No existing token, create a new one
                 var tokenDoc = new PushTokenDocument
                 {
                     id = Guid.NewGuid().ToString(),
@@ -102,4 +105,6 @@ namespace OCR_AI_Grocery.Tokens
             }
         }
     }
+
+     
 }
