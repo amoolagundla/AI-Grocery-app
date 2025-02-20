@@ -4,8 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace OCR_AI_Grocery.models
+namespace OCR_AI_Grocery.Notifications
 {
+
     public class NotificationMessage
     {
         public string UserEmail { get; set; }

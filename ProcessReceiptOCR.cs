@@ -62,7 +62,7 @@ namespace OCR_AI_Grocery
                 log.LogInformation($"ProcessReceiptOCR function processing event: {eventJson}");
                 try
                 {
-                    var eventData = System.Text.Json.JsonSerializer.Deserialize<List<EventGridEvent>>(eventJson).FirstOrDefault();
+                    var eventData = System.Text.Json.JsonSerializer.Deserialize<List<EventGridEvent>>(eventJson)?.FirstOrDefault();
                     if (eventData == null)
                     {
                         log.LogWarning("Invalid event data. Skipping processing.");
@@ -87,21 +87,9 @@ namespace OCR_AI_Grocery
                     }
 
                     string extractedText = await PerformOCR(Content);
-                    log.LogInformation($"Successfully extracted OCR Text: {extractedText}");
-
-                    // TODO: Implement saving extracted text to Azure Data Lake or CosmosDB
-                    await SaveToCosmosDb(eventData, extractedText,blobUrl, Metadata);
-
-                    var queueMessage = JsonConvert.SerializeObject(new { userEmail = Metadata?.TryGetValue("email", out var userId) == true ? userId : "Unknown" });
-                    var message = new ServiceBusMessage(Encoding.UTF8.GetBytes(queueMessage))
-                    {
-                        ContentType = "application/json",
-                        Subject = "ReceiptAnalysis",
-                        MessageId = Guid.NewGuid().ToString()
-                    };
-
-                    // Send message to Service Bus queue
-                    await _queueSender.SendMessageAsync(message);
+                    log.LogInformation($"Successfully extracted OCR Text: {extractedText}"); 
+                    await SaveToCosmosDb(eventData, extractedText, blobUrl, Metadata);
+                    await NewMethod(eventData, blobUrl, Metadata, extractedText);
 
                     log.LogInformation($"Successfully SendMessageAsync to queue  ");
                 }
@@ -113,6 +101,21 @@ namespace OCR_AI_Grocery
             }
 
             return string.Empty;
+        }
+
+        private async Task NewMethod(EventGridEvent? eventData, string blobUrl, IDictionary<string, string> Metadata, string extractedText)
+        {
+
+            var queueMessage = JsonConvert.SerializeObject(new { userEmail = Metadata?.TryGetValue("email", out var userId) == true ? userId : "Unknown", familyId = Metadata?.TryGetValue("familyId", out var familyId) == true ? familyId : "Unknown" });
+            var message = new ServiceBusMessage(Encoding.UTF8.GetBytes(queueMessage))
+            {
+                ContentType = "application/json",
+                Subject = "ReceiptAnalysis",
+                MessageId = Guid.NewGuid().ToString()
+            };
+
+            // Send message to Service Bus queue
+            await _queueSender.SendMessageAsync(message);
         }
 
         private async Task SaveToCosmosDb(EventGridEvent eventData, string extractedText,string bloblurl, IDictionary<string, string> metadata)

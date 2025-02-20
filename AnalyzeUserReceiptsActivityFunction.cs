@@ -61,15 +61,15 @@ namespace OCR_AI_Grocery
                 // Main processing
                 var receiptMessage = JsonConvert.DeserializeObject<ReceiptAnalysisMessage>(message.Body.ToString());
 
-                if (string.IsNullOrEmpty(receiptMessage?.UserEmail))
+                if (string.IsNullOrEmpty(receiptMessage?.FamilyId))
                 {
                     throw new ArgumentException("Missing UserEmail in queue message");
                 }
 
-                var receipts = await FetchReceipts(receiptMessage.UserEmail);
+                var receipts = await FetchReceipts(receiptMessage.FamilyId);
                 if (!receipts.Any())
                 {
-                    throw new InvalidOperationException($"No receipts found for {receiptMessage.UserEmail}");
+                    throw new InvalidOperationException($"No receipts found for {receiptMessage.FamilyId}");
                 }
 
                 var groupedItems = await AnalyzeReceiptsWithOpenAI(receipts);
@@ -80,7 +80,7 @@ namespace OCR_AI_Grocery
 
                 var shoppingList = new ShoppingList
                 {
-                    Id = receiptMessage.UserEmail,
+                    Id = receiptMessage.FamilyId,
                     UserId = receiptMessage.UserEmail,
                     StoreItems = groupedItems,
                     CreatedAt = DateTime.UtcNow
@@ -107,15 +107,15 @@ namespace OCR_AI_Grocery
         {
             var notification = new NotificationMessage
             {
-                UserId = receiptMessage.UserEmail,
+                UserEmail = receiptMessage.UserEmail,
                 Title = "Shopping List Updated",
                 Body = $"Your shopping list has been updated with items from {groupedItems.Count} stores",
                 Data = new Dictionary<string, string>
-    {
-        { "type", "shopping_list_update" },
-        { "listId", shoppingList.Id }
-    }
-            };
+                            {
+                                { "type", "shopping_list_update" },
+                                { "listId", shoppingList.Id }
+                            }
+                                    };
 
             await _notificationQueueSender.SendMessageAsync(
                 new ServiceBusMessage(JsonConvert.SerializeObject(notification))
@@ -145,7 +145,7 @@ namespace OCR_AI_Grocery
 
         private async Task<List<ReceiptDocument>> FetchReceipts(string userEmail)
         {
-            var query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userEmail")
+            var query = new QueryDefinition("SELECT * FROM c WHERE c.FamilyId = @userEmail")
                     .WithParameter("@userEmail", userEmail);
 
             var receipts = new List<ReceiptDocument>();
@@ -285,6 +285,9 @@ namespace OCR_AI_Grocery
     // 📨 Service Bus Message Model
     public class ReceiptAnalysisMessage
     {
+        [JsonProperty("familyId")]
+        public string FamilyId { get; set; }
+
         [JsonProperty("userEmail")]
         public string UserEmail { get; set; }
     }

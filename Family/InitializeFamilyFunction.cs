@@ -112,11 +112,10 @@ namespace OCR_AI_Grocery
         private async Task<string> CheckExistingFamilyMembership(string email)
         {
             var query = new QueryDefinition(
-                "SELECT c.FamilyId FROM c WHERE c.email = @email")
-                .WithParameter("@email", email);
+         "SELECT TOP 1 c.FamilyId FROM c WHERE c.email = @email ORDER BY c._ts DESC")
+         .WithParameter("@email", email);
 
             using var iterator = _familyJunctionContainer.GetItemQueryIterator<dynamic>(query);
-
             if (iterator.HasMoreResults)
             {
                 var response = await iterator.ReadNextAsync();
@@ -125,7 +124,6 @@ namespace OCR_AI_Grocery
                     return response.First().FamilyId.ToString();
                 }
             }
-
             return null;
         }
 
