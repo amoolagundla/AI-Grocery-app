@@ -18,6 +18,8 @@ using Azure.Storage.Queues;
 using static Microsoft.ApplicationInsights.MetricDimensionNames.TelemetryContext;
 using static OCR_AI_Grocery.ProcessReceiptOCR;
 using OCR_AI_Grocery.services;
+using OCR_AI_Grocery.models;
+using ReceiptDocument = OCR_AI_Grocery.ProcessReceiptOCR.ReceiptDocument;
 
 namespace OCR_AI_Grocery
 {
@@ -28,10 +30,11 @@ namespace OCR_AI_Grocery
         private readonly CosmosClient _cosmosClient;
         private readonly Container _container;
         private readonly HttpClient _httpClient;
-        private readonly ILogger _logger;
-        private readonly ServiceBusSender _queueSender;
+        private readonly ILogger _logger; 
         private readonly ServiceBusClient _serviceBusClient;
         private CleanJsonResponseHelper cleanJsonResponseHelper;
+        private readonly ServiceBusSender _notificationQueueSender;
+
         public AnalyzeUserReceiptsActivityFunction(ILoggerFactory loggerFactory, HttpClient httpClient)
         {
 
@@ -40,97 +43,127 @@ namespace OCR_AI_Grocery
             _logger = loggerFactory.CreateLogger<AnalyzeUserReceiptsActivityFunction>();
             _receiptsContainer = _cosmosClient.GetContainer("ReceiptsDB", "receipts");
             _shoppingListContainer = _cosmosClient.GetContainer("ReceiptsDB", "ShoppingLists");
-            _container = _cosmosClient.GetContainer("ReceiptsDB", "receipts");
-            string serviceBusConnectionString = Environment.GetEnvironmentVariable("QueueConnectionString")
-                ?? throw new InvalidOperationException("Service Bus connection string not found");
+            _container = _cosmosClient.GetContainer("ReceiptsDB", "receipts"); 
+            cleanJsonResponseHelper = new CleanJsonResponseHelper(loggerFactory); 
+            string serviceBusConnectionString = Environment.GetEnvironmentVariable("NotificaitonQueueConnectionString")
+             ?? throw new InvalidOperationException("Service Bus connection string not found");
 
             // Create Service Bus client and sender
-            _serviceBusClient = new ServiceBusClient(serviceBusConnectionString);
-            _queueSender = _serviceBusClient.CreateSender("receipt-analysis-queue");
-            _httpClient = httpClient;
-            cleanJsonResponseHelper = new CleanJsonResponseHelper(loggerFactory);
+            _serviceBusClient = new ServiceBusClient(serviceBusConnectionString); 
+            _notificationQueueSender = _serviceBusClient.CreateSender("user-notifications-queue");
         }
 
         [Function("AnalyzeUserReceiptsActivityFunction")]
-        public async Task Run(
-            [ServiceBusTrigger("receipt-analysis-queue", Connection = "QueueConnectionString")] ServiceBusReceivedMessage message,
-            FunctionContext context)
+        public async Task Run([ServiceBusTrigger("receipt-analysis-queue", Connection = "QueueConnectionString")] ServiceBusReceivedMessage message, FunctionContext context)
         {
-
-
             try
             {
-                _logger.LogInformation("📩 Received Message ID: {MessageId}", message.MessageId);
+                // Main processing
                 var receiptMessage = JsonConvert.DeserializeObject<ReceiptAnalysisMessage>(message.Body.ToString());
-                string userEmail = receiptMessage?.UserEmail ?? string.Empty;
 
-                if (string.IsNullOrEmpty(userEmail))
+                if (string.IsNullOrEmpty(receiptMessage?.UserEmail))
                 {
-                    _logger.LogError("🚨 Missing UserEmail in queue message.");
-                    return;
+                    throw new ArgumentException("Missing UserEmail in queue message");
                 }
 
-                // 🔍 Fetch receipts for this user
-                var query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userEmail")
-                    .WithParameter("@userEmail", userEmail);
-
-                var receipts = new List<ReceiptDocument>();
-
-                using FeedIterator<ReceiptDocument> queryIterator = _receiptsContainer.GetItemQueryIterator<ReceiptDocument>(query);
-                while (queryIterator.HasMoreResults)
+                var receipts = await FetchReceipts(receiptMessage.UserEmail);
+                if (!receipts.Any())
                 {
-                    FeedResponse<ReceiptDocument> response = await queryIterator.ReadNextAsync();
-                    receipts.AddRange(response);
+                    throw new InvalidOperationException($"No receipts found for {receiptMessage.UserEmail}");
                 }
 
-                if (receipts.Count == 0)
-                {
-                    _logger.LogWarning("⚠️ No receipts found for {UserEmail}", userEmail);
-                    return;
-                }
-
-                // 🔄 Analyze receipts with OpenAI
                 var groupedItems = await AnalyzeReceiptsWithOpenAI(receipts);
-
-                if (groupedItems == null || groupedItems.Count == 0)
+                if (groupedItems == null || !groupedItems.Any())
                 {
-                    _logger.LogWarning("⚠️ No shopping list data extracted.");
-                    return;
+                    throw new InvalidOperationException("No shopping list data extracted");
                 }
 
-                // 🛒 Store analysis results and update original receipts
                 var shoppingList = new ShoppingList
                 {
-                    Id = userEmail,
-                    UserId = userEmail,
+                    Id = receiptMessage.UserEmail,
+                    UserId = receiptMessage.UserEmail,
                     StoreItems = groupedItems,
                     CreatedAt = DateTime.UtcNow
                 };
 
+                // Use transactions or batch operations if possible
                 await _shoppingListContainer.UpsertItemAsync(shoppingList, new PartitionKey(shoppingList.UserId));
+                await UpdateReceipts(receipts, groupedItems);
 
-                // 🔄 Update each receipt with StoreName & PurchasedDate
-                foreach (var store in groupedItems)
-                {
-                    string storeName = store.Key;
-                    foreach (var item in store.Value)
-                    {
-                        var receiptToUpdate = receipts.FirstOrDefault(r => r.ReceiptText.Contains(item));
-                        if (receiptToUpdate != null)
-                        {
-                            receiptToUpdate.StoreName = storeName;
-                            receiptToUpdate.PurchasedDate = DateTime.UtcNow; // Adjust if AI extracts an actual date
+                // Message is auto-completed only if no exceptions are thrown
 
-                            await _receiptsContainer.ReplaceItemAsync(receiptToUpdate, receiptToUpdate.Id, new PartitionKey(receiptToUpdate.FamilyId));
-                            _logger.LogInformation($"✅ Updated receipt {receiptToUpdate.Id} with Store: {storeName}");
-                        }
-                    }
-                }
+                // After successful processing:
+                await SendNotification(receiptMessage, groupedItems, shoppingList);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error processing receipts.");
+                _logger.LogError(ex, "Error processing receipts");
+                // Message will be abandoned and retried
+                throw;
             }
+        }
+
+        private async Task SendNotification(ReceiptAnalysisMessage? receiptMessage, Dictionary<string, List<string>> groupedItems, ShoppingList shoppingList)
+        {
+            var notification = new NotificationMessage
+            {
+                UserId = receiptMessage.UserEmail,
+                Title = "Shopping List Updated",
+                Body = $"Your shopping list has been updated with items from {groupedItems.Count} stores",
+                Data = new Dictionary<string, string>
+    {
+        { "type", "shopping_list_update" },
+        { "listId", shoppingList.Id }
+    }
+            };
+
+            await _notificationQueueSender.SendMessageAsync(
+                new ServiceBusMessage(JsonConvert.SerializeObject(notification))
+            );
+        }
+
+        private async Task UpdateReceipts(List<ReceiptDocument> receipts, Dictionary<string, List<string>> groupedItems)
+        {
+            // 🔄 Update each receipt with StoreName & PurchasedDate
+            foreach (var store in groupedItems)
+            {
+                string storeName = store.Key;
+                foreach (var item in store.Value)
+                {
+                    var receiptToUpdate = receipts.FirstOrDefault(r => r.ReceiptText.Contains(item));
+                    if (receiptToUpdate != null)
+                    {
+                        receiptToUpdate.StoreName = storeName;
+                        receiptToUpdate.PurchasedDate = DateTime.UtcNow; // Adjust if AI extracts an actual date
+
+                        await _receiptsContainer.ReplaceItemAsync(receiptToUpdate, receiptToUpdate.Id, new PartitionKey(receiptToUpdate.FamilyId));
+                        _logger.LogInformation($"✅ Updated receipt {receiptToUpdate.Id} with Store: {storeName}");
+                    }
+                }
+            }
+        }
+
+        private async Task<List<ReceiptDocument>> FetchReceipts(string userEmail)
+        {
+            var query = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @userEmail")
+                    .WithParameter("@userEmail", userEmail);
+
+            var receipts = new List<ReceiptDocument>();
+
+            using FeedIterator<ReceiptDocument> queryIterator = _receiptsContainer.GetItemQueryIterator<ReceiptDocument>(query);
+            while (queryIterator.HasMoreResults)
+            {
+                FeedResponse<ReceiptDocument> response = await queryIterator.ReadNextAsync();
+                receipts.AddRange(response);
+            }
+
+            if (receipts.Count == 0)
+            {
+                _logger.LogWarning("⚠️ No receipts found for {UserEmail}", userEmail);
+                return new List<ReceiptDocument>();
+            }
+
+            return receipts;
         }
 
         private async Task<Dictionary<string, List<string>>> AnalyzeReceiptsWithOpenAI(List<ReceiptDocument> receipts)
@@ -219,7 +252,7 @@ namespace OCR_AI_Grocery
             try
             {
                 // Should now be clean JSON without need for additional cleaning
-                 var result = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(aiGeneratedText);
+                var result = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(aiGeneratedText);
                 return result ?? new Dictionary<string, List<string>>();
             }
             catch (JsonException ex)
@@ -245,7 +278,7 @@ namespace OCR_AI_Grocery
 
             [JsonProperty("choices")]
             public List<Choice> Choices { get; set; } = new List<Choice>();
-        } 
+        }
 
     }
 

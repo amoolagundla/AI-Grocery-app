@@ -18,5 +18,9 @@
         }
       }
     }
+  },
+  "Host": {
+    "LocalHttpPort": 4200,
+    "CORS": "*"
   }
 }
