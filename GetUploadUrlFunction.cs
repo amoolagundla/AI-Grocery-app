@@ -41,7 +41,7 @@ public class GetUploadUrlFunction
             var blobClient = blobContainerClient.GetBlobClient(fileName);
 
             // Get User Delegation Key
-            var userDelegationKey = await blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1));
+            var userDelegationKey = await blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(3));
 
             // Generate SAS Token
             var sasBuilder = new BlobSasBuilder
@@ -49,7 +49,7 @@ public class GetUploadUrlFunction
                 BlobContainerName = containerName,
                 BlobName = fileName,
                 Resource = "b",
-                ExpiresOn = DateTime.UtcNow.AddMinutes(15) // URL valid for 15 mins
+                ExpiresOn = DateTime.UtcNow.AddMinutes(45) // URL valid for 15 mins
             };
             sasBuilder.SetPermissions(BlobContainerSasPermissions.Write);
 
