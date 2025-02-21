@@ -41,16 +41,18 @@ public class GetUploadUrlFunction
             var blobClient = blobContainerClient.GetBlobClient(fileName);
 
             // Get User Delegation Key
-            var userDelegationKey = await blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(3));
+            var userDelegationKey = await blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1));
 
             // Generate SAS Token
             var sasBuilder = new BlobSasBuilder
             {
-                BlobContainerName = containerName,
-                BlobName = fileName,
+                BlobContainerName = "receipts",
+                BlobName = "receipt_0f354a1b-eb5d-4adc-996d-0e551839b725.jpg",
                 Resource = "b",
-                ExpiresOn = DateTime.UtcNow.AddMinutes(45) // URL valid for 15 mins
+                StartsOn = DateTimeOffset.UtcNow.AddMinutes(-5), // Ensure start is valid
+                ExpiresOn = DateTimeOffset.UtcNow.AddHours(2)   // Extend expiry by 2 hours
             };
+             
             sasBuilder.SetPermissions(BlobContainerSasPermissions.Write);
 
             var sasToken = sasBuilder.ToSasQueryParameters(userDelegationKey, storageAccountName).ToString();
