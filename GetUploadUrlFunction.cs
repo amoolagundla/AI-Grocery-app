@@ -56,7 +56,8 @@ public class GetUploadUrlFunction
             };
 
             // ✅ Add `Create` and `Write` permissions for file uploads
-            sasBuilder.SetPermissions(BlobSasPermissions.Create | BlobSasPermissions.Write);
+            sasBuilder.SetPermissions(BlobSasPermissions.Read | BlobSasPermissions.Write | BlobSasPermissions.Create);
+
 
             // Generate SAS Token
             var sasToken = sasBuilder.ToSasQueryParameters(userDelegationKey, storageAccountName).ToString();
