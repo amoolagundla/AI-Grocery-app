@@ -26,13 +26,13 @@ public class GetUploadUrlFunction
     {
         _logger.LogInformation("Generating a pre-signed upload URL using SAS Token.");
 
-        string storageAccountName = "reciepts"; // Make sure this is correct
+        string storageAccountName = "reciepts"; // Verify this is the correct account name
         string containerName = "receipts";
         string fileName = $"receipt_{Guid.NewGuid()}.jpg"; // Unique filename
 
         try
         {
-            // Authenticate using Managed Identity
+            // Authenticate using Managed Identity (Make sure your function has Identity enabled in Azure)
             var blobServiceClient = new BlobServiceClient(
                 new Uri($"https://{storageAccountName}.blob.core.windows.net"),
                 new DefaultAzureCredential());
@@ -40,23 +40,26 @@ public class GetUploadUrlFunction
             var blobContainerClient = blobServiceClient.GetBlobContainerClient(containerName);
             var blobClient = blobContainerClient.GetBlobClient(fileName);
 
-            // Get User Delegation Key
-            var userDelegationKey = await blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1));
+            // Get User Delegation Key (Valid for 2 hours)
+            var userDelegationKey = await blobServiceClient.GetUserDelegationKeyAsync(
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow.AddHours(2));
 
-            // Generate SAS Token
+            // Generate SAS Token (Fixed blob name issue)
             var sasBuilder = new BlobSasBuilder
             {
-                BlobContainerName = "receipts",
-                BlobName = "receipt_0f354a1b-eb5d-4adc-996d-0e551839b725.jpg",
+                BlobContainerName = containerName,
+                BlobName = fileName,
                 Resource = "b",
-                StartsOn = DateTimeOffset.UtcNow.AddMinutes(-5), // Ensure start is valid
-                ExpiresOn = DateTimeOffset.UtcNow.AddHours(2)   // Extend expiry by 2 hours
+                StartsOn = DateTimeOffset.UtcNow.AddMinutes(-5), // Ensures validity
+                ExpiresOn = DateTimeOffset.UtcNow.AddHours(2)    // 2-hour expiration
             };
-             
-            sasBuilder.SetPermissions(BlobContainerSasPermissions.Write);
 
+            // ✅ Add `Create` and `Write` permissions for file uploads
+            sasBuilder.SetPermissions(BlobSasPermissions.Create | BlobSasPermissions.Write);
+
+            // Generate SAS Token
             var sasToken = sasBuilder.ToSasQueryParameters(userDelegationKey, storageAccountName).ToString();
-
             var sasUrl = $"{blobClient.Uri}?{sasToken}";
 
             return new OkObjectResult(new { uploadUrl = sasUrl, fileName });
@@ -64,7 +67,7 @@ public class GetUploadUrlFunction
         catch (Exception ex)
         {
             _logger.LogError($"Error generating upload URL: {ex.Message}");
-            return new ObjectResult("Error generating upload URL") { StatusCode = 500 };
+            return new ObjectResult(new { error = "Error generating upload URL" }) { StatusCode = 500 };
         }
     }
 }
