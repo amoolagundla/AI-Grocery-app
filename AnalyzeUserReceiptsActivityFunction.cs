@@ -20,6 +20,8 @@ using static OCR_AI_Grocery.ProcessReceiptOCR;
 using OCR_AI_Grocery.services;
 using OCR_AI_Grocery.models;
 using ReceiptDocument = OCR_AI_Grocery.ProcessReceiptOCR.ReceiptDocument;
+using System.Text.RegularExpressions;
+using System.Globalization;
 
 namespace OCR_AI_Grocery
 {
@@ -124,24 +126,57 @@ namespace OCR_AI_Grocery
 
         private async Task UpdateReceipts(List<ReceiptDocument> receipts, Dictionary<string, List<string>> groupedItems)
         {
-            // 🔄 Update each receipt with StoreName & PurchasedDate
             foreach (var store in groupedItems)
             {
-                string storeName = store.Key;
+                string extractedStoreName = NormalizeStoreName(store.Key);
+
                 foreach (var item in store.Value)
                 {
-                    var receiptToUpdate = receipts.FirstOrDefault(r => r.ReceiptText.Contains(item));
+                    var receiptToUpdate = receipts.FirstOrDefault(r => r.ReceiptText.Contains(item, StringComparison.OrdinalIgnoreCase));
+
                     if (receiptToUpdate != null)
                     {
-                        receiptToUpdate.StoreName = storeName;
-                        receiptToUpdate.PurchasedDate = DateTime.UtcNow; // Adjust if AI extracts an actual date
+                        // Extract Store Name from Receipt Text 
+                        if (!string.IsNullOrEmpty(extractedStoreName))
+                        {
+                            extractedStoreName = extractedStoreName;  // Use extracted name if found
+                        }
+
+                        receiptToUpdate.StoreName = extractedStoreName;
+                        receiptToUpdate.PurchasedDate = DateTime.UtcNow; // Adjust if AI extracts actual date
 
                         await _receiptsContainer.ReplaceItemAsync(receiptToUpdate, receiptToUpdate.Id, new PartitionKey(receiptToUpdate.FamilyId));
-                        _logger.LogInformation($"✅ Updated receipt {receiptToUpdate.Id} with Store: {storeName}");
+                        _logger.LogInformation($"✅ Updated receipt {receiptToUpdate.Id} with Store: {extractedStoreName}");
                     }
                 }
             }
         }
+        private string ExtractStoreName(string receiptText)
+        {
+            // Common store name patterns
+            string storePattern = @"^(.*?)(?:\d{3,}|\bServer\b|\bCheck\b|Ordered:|\$|Subtotal|Tax|Total)";
+
+            var match = Regex.Match(receiptText, storePattern, RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            if (match.Success)
+            {
+                string storeName = match.Groups[1].Value.Trim();
+                return NormalizeStoreName(storeName);
+            }
+
+            return string.Empty;
+        }
+        private string NormalizeStoreName(string storeName)
+        {
+            if (string.IsNullOrEmpty(storeName))
+                return "Unknown Store";
+
+            // Remove special characters except spaces
+            storeName = Regex.Replace(storeName, @"[^a-zA-Z0-9\s]", "");
+
+            // Trim spaces and capitalize first letter
+            return CultureInfo.CurrentCulture.TextInfo.ToTitleCase(storeName.ToLower().Trim());
+        }
+
 
         private async Task<List<ReceiptDocument>> FetchReceipts(string userEmail)
         {
