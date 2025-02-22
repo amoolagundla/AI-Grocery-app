@@ -13,6 +13,7 @@ namespace OCR_AI_Grocery.models
         public string FamilyId { get; set; } = string.Empty;
         public string ReceiptText { get; set; } = string.Empty;
         public string BlobUrl { get; set; } = string.Empty; // URL to receipt image
+        public string StoreName { get; set; } = string.Empty; 
         public DateTime CreatedAt { get; set; }
     }
 }
