@@ -80,7 +80,7 @@ namespace OCR_AI_Grocery
                     query,
                     continuationToken,
                     queryOptions))
-                {
+                { 
                     if (queryIterator.HasMoreResults)
                     {
                         FeedResponse<Receipt> currentPage = await queryIterator.ReadNextAsync();
