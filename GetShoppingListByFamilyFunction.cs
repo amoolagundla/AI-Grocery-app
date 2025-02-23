@@ -40,16 +40,16 @@ namespace OCR_AI_Grocery
 
         [Function("GetShoppingListsForFamily")]
         public async Task<IActionResult> Run(
-         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "family/{familyId}/shoppingLists")] HttpRequestData req,
-         string familyId)
+         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "family/{userEmail}/shoppingLists")] HttpRequestData req,
+         string userEmail)
         {
-            _logger.LogInformation($"Fetching receipts for FamilyId: {familyId}");
+            _logger.LogInformation($"Fetching receipts for FamilyId: {userEmail}");
 
             try
             {
                 // Step 1: Query Receipts for the given FamilyId
                 var receiptsQuery = new QueryDefinition("SELECT DISTINCT c.UserId FROM c WHERE c.FamilyId = @familyId")
-                                    .WithParameter("@familyId", familyId);
+                                    .WithParameter("@familyId", userEmail);
 
                 var emailSet = new HashSet<string>();
                 using (FeedIterator<Receipt> resultSetIterator = _receiptsContainer.GetItemQueryIterator<Receipt>(receiptsQuery))

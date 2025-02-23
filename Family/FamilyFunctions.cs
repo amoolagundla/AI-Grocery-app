@@ -123,13 +123,18 @@ namespace OCR_AI_Grocery
 
                 var invite = new FamilyInvite
                 {
+                     
                     FamilyId = familyId,
                     InvitedUserEmail = invitedUserEmail,
-                    InviteId = invitedBy,
+                    InvitedId = invitedBy,
                     Status = "pending",
                     CreatedAt = DateTime.UtcNow
-                }; 
+                };
 
+                await _invitesContainer.UpsertItemAsync(
+                   invite,
+                   new PartitionKey(invite.FamilyId)
+               );
                 return new OkObjectResult(new { message = "Invitation sent successfully." });
             }
             catch (Exception ex)
@@ -139,11 +144,10 @@ namespace OCR_AI_Grocery
             }
         }
 
-        // POST /api/family/invites/{inviteId}/process
         [Function("ProcessFamilyInvite")]
         public async Task<IActionResult> ProcessInvite(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "family/invites/{inviteId}/process")] HttpRequest req,
-            string inviteId)
+     [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "family/invites/{inviteId}/{invitedUserEmail}/process")] HttpRequest req,
+     string inviteId, string invitedUserEmail)
         {
             try
             {
@@ -156,51 +160,88 @@ namespace OCR_AI_Grocery
                     return new BadRequestObjectResult(new { message = "Invalid action. Must be 'accept' or 'reject'." });
                 }
 
-                var invite = await _invitesContainer.ReadItemAsync<FamilyInvite>(
-                    inviteId,
-                    new PartitionKey(inviteId)
-                );
+                // Find the invite
+                var query = new QueryDefinition(
+                    "SELECT * FROM c WHERE c.id = @inviteId and c.InvitedUserEmail=@invitedUserEmail and c.Status = 'pending'")
+                    .WithParameter("@inviteId", inviteId)
+                    .WithParameter("@invitedUserEmail", invitedUserEmail);
 
-                if (invite.Resource.Status != "pending")
+                var invites = new List<FamilyInvite>();
+                using var iterator = _invitesContainer.GetItemQueryIterator<FamilyInvite>(query);
+                while (iterator.HasMoreResults)
                 {
-                    return new BadRequestObjectResult(new { message = "Invite is no longer pending." });
+                    var response = await iterator.ReadNextAsync();
+                    invites.AddRange(response);
                 }
+
+                if (!invites.Any())
+                {
+                    return new NotFoundObjectResult(new { message = "Invite not found." });
+                }
+
+                var invite = invites.First();
 
                 if (action == "accept")
                 {
-                    var junction = new FamilyJunction
-                    {
-                        Id = invite.Resource.InvitedUserEmail,
-                        Email = invite.Resource.InvitedUserEmail,
-                        FamilyId = invite.Resource.FamilyId,
-                        JoinDate = DateTime.UtcNow,
-                        Status = "Active"
-                    };
+                    // Check if junction already exists
+                    var junctionQuery = new QueryDefinition(
+                        "SELECT * FROM c WHERE c.Email = @email AND c.FamilyId = @familyId")
+                        .WithParameter("@email", invite.InvitedUserEmail)
+                        .WithParameter("@familyId", invite.FamilyId);
 
-                    await _familyJunctionContainer.CreateItemAsync(
-                        junction,
-                        new PartitionKey(junction.FamilyId)
-                    );
+                    var existingJunctions = new List<FamilyJunction>();
+                    using var junctionIterator = _familyJunctionContainer.GetItemQueryIterator<FamilyJunction>(junctionQuery);
+                    while (junctionIterator.HasMoreResults)
+                    {
+                        var response = await junctionIterator.ReadNextAsync();
+                        existingJunctions.AddRange(response);
+                    }
+
+                    if (!existingJunctions.Any())
+                    {
+                        var junction = new FamilyJunction
+                        {
+                            Id = Guid.NewGuid().ToString(),
+                            Email = invite.InvitedUserEmail,
+                            FamilyId = invite.FamilyId,
+                            JoinDate = DateTime.UtcNow,
+                            Status = "Active",
+                            PartitionKey = invite.FamilyId  // Make sure this matches your model
+                        };
+
+                        await _familyJunctionContainer.CreateItemAsync(
+                            junction,
+                            new PartitionKey(junction.PartitionKey)
+                        );
+                    }
                 }
 
-                invite.Resource.Status = action == "accept" ? "accepted" : "rejected";
-                invite.Resource.ResponseDate = DateTime.UtcNow;
+                // Update the invite
+                invite.Status = action == "accept" ? "accepted" : "rejected";
+                invite.ResponseDate = DateTime.UtcNow;
+                invite.PartitionKey = invitedUserEmail;  // Make sure this matches your model
 
-                await _invitesContainer.ReplaceItemAsync(
-                    invite.Resource,
-                    inviteId,
-                    new PartitionKey(inviteId)
+               
+                await _invitesContainer.UpsertItemAsync(
+                    invite, 
+                    new PartitionKey(invite.FamilyId)
                 );
 
                 return new OkObjectResult(new
                 {
                     message = $"Invitation {action}ed successfully.",
-                    familyId = invite.Resource.FamilyId
+                    familyId = invite.FamilyId
                 });
             }
             catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
+                _logger.LogError($"CosmosDB Not Found Error: {ex.Message}");
                 return new NotFoundObjectResult(new { message = "Invite not found." });
+            }
+            catch (CosmosException ex)
+            {
+                _logger.LogError($"CosmosDB Error: {ex.Message}");
+                return new StatusCodeResult((int)ex.StatusCode);
             }
             catch (Exception ex)
             {

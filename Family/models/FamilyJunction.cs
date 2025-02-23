@@ -11,7 +11,8 @@ namespace OCR_AI_Grocery.Family.models
     {
         [JsonProperty("id")]
         public string Id { get; set; } = string.Empty; // Email as ID
-
+        [JsonProperty("partitionKey")]
+        public string PartitionKey { get; set; }  // This should match FamilyId
         [JsonProperty("FamilyId")]
         public string FamilyId { get; set; } = string.Empty;
 
