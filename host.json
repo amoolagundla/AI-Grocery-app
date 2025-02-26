@@ -10,6 +10,14 @@
     }
   },
   "extensions": {
+    "http": {
+      "routePrefix": "",
+      "cors": {
+        "allowedOrigins": [ "http://localhost:4200" ],
+        "allowedMethods": [ "GET", "POST", "PUT", "DELETE", "OPTIONS" ],
+        "maxAge": 3600
+      }
+    },
     "eventHub": {
       "batchCheckpointFrequency": 10,
       "eventProcessorOptions": {
