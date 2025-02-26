@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: 
+  workflow_dispatch:
 
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' 
@@ -35,6 +35,12 @@ jobs:
       - name: 'Publish Project'
         run: dotnet publish --configuration Release --output ./publish
 
+      - name: 'Create Deployment Zip'
+        run: |
+          cd ./publish
+          zip -r ../publish.zip .
+        working-directory: .
+
       - name: 'Login to Azure'
         uses: azure/login@v2
         with:
@@ -42,12 +48,9 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID }}
 
-      - name: 'Deploy to Azure Function'
-        uses: Azure/functions-action@v1
-        with:
-          app-name: 'ocr-function-ai-grocery'
-          slot-name: 'Production'
-          package: './publish'  # ✅ FIXED: Use pre-built output
-          respect-funcignore: true
-          enable-oryx-build: false  # ✅ Disable Oryx build (not needed)
-          remote-build: false  # ✅ Disable remote build (FlexConsumption doesn't support it)
+      - name: 'Deploy to Azure Function Without Kudu'
+        run: |
+          az functionapp deployment source config-zip \
+            --resource-group AI-Grocery \
+            --name ocr-function-ai-grocery \
+            --src ./publish.zip
