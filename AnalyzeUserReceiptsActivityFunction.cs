@@ -22,6 +22,7 @@ using OCR_AI_Grocery.models;
 using ReceiptDocument = OCR_AI_Grocery.ProcessReceiptOCR.ReceiptDocument;
 using System.Text.RegularExpressions;
 using System.Globalization;
+using System.Security.Cryptography.X509Certificates;
 
 namespace OCR_AI_Grocery
 {
@@ -90,12 +91,12 @@ namespace OCR_AI_Grocery
 
                 // Use transactions or batch operations if possible
                 await _shoppingListContainer.UpsertItemAsync(shoppingList, new PartitionKey(shoppingList.UserId));
-                await UpdateReceipts(receipts, groupedItems);
+                var storeName= await UpdateReceipts(receipts, groupedItems);
 
                 // Message is auto-completed only if no exceptions are thrown
 
                 // After successful processing:
-                await SendNotification(receiptMessage, groupedItems, shoppingList);
+                await SendNotification(receiptMessage, groupedItems, shoppingList, storeName);
             }
             catch (Exception ex)
             {
@@ -105,12 +106,12 @@ namespace OCR_AI_Grocery
             }
         }
 
-        private async Task SendNotification(ReceiptAnalysisMessage? receiptMessage, Dictionary<string, List<string>> groupedItems, ShoppingList shoppingList)
+        private async Task SendNotification(ReceiptAnalysisMessage? receiptMessage, Dictionary<string, List<string>> groupedItems, ShoppingList shoppingList,string storeName)
         {
             var notification = new NotificationMessage
             {
                 UserEmail = receiptMessage.UserEmail,
-                Title = "Shopping List Updated",
+                Title = storeName,
                 Body = $"Your shopping list has been updated with items from {groupedItems.Count} stores",
                 Data = new Dictionary<string, string>
                             {
@@ -124,12 +125,13 @@ namespace OCR_AI_Grocery
             );
         }
 
-        private async Task UpdateReceipts(List<ReceiptDocument> receipts, Dictionary<string, List<string>> groupedItems)
+        private async Task<string> UpdateReceipts(List<ReceiptDocument> receipts, Dictionary<string, List<string>> groupedItems)
         {
+            var returnString = string.Empty;
             foreach (var store in groupedItems)
             {
                 string extractedStoreName = NormalizeStoreName(store.Key);
-
+                returnString = extractedStoreName;
                 foreach (var item in store.Value)
                 {
                     var receiptToUpdate = receipts.FirstOrDefault(r => r.ReceiptText.Contains(item, StringComparison.OrdinalIgnoreCase));
@@ -150,6 +152,7 @@ namespace OCR_AI_Grocery
                     }
                 }
             }
+            return returnString;
         }
         private string ExtractStoreName(string receiptText)
         {
