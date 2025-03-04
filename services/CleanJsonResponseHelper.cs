@@ -1,4 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+using System;
 using System.Text.RegularExpressions;
 
 namespace OCR_AI_Grocery.services
@@ -18,6 +20,9 @@ namespace OCR_AI_Grocery.services
             {
                 _logger.LogInformation("🔍 Cleaning AI JSON Response...");
 
+                // Remove markdown code blocks if present
+                response = Regex.Replace(response, @"```json\s*|\s*```", "");
+
                 // Extract JSON content
                 int startIndex = response.IndexOf('{');
                 int endIndex = response.LastIndexOf('}');
@@ -35,7 +40,10 @@ namespace OCR_AI_Grocery.services
                 // Step 2: Fix property names with apostrophes
                 response = FixPropertyNames(response);
 
-                // Step 3: Ensure all remaining single quotes are converted to double quotes
+                // Step 3: Fix unterminated strings (a common issue)
+                response = FixUnterminatedStrings(response);
+
+                // Step 4: Ensure all remaining single quotes are converted to double quotes
                 response = response.Replace("'", "\"");
 
                 _logger.LogInformation($"✅ Cleaned JSON Response: {response}");
@@ -55,7 +63,6 @@ namespace OCR_AI_Grocery.services
                 // Pattern to match property names that might contain apostrophes
                 // Matches: "PropertyName"s" or "PropertyName\"s"
                 var pattern = @"""([^""]+)""s""(?=\s*:)";
-
                 return Regex.Replace(json, pattern, match =>
                 {
                     // Get the property name without the surrounding quotes
@@ -68,6 +75,66 @@ namespace OCR_AI_Grocery.services
             {
                 _logger.LogError($"❌ Error in fixing property names: {ex.Message}");
                 return json;
+            }
+        }
+
+        private string FixUnterminatedStrings(string json)
+        {
+            try
+            {
+                // This is a simplified approach to fix common unterminated strings
+                // For a more robust solution, a proper JSON parser might be needed
+
+                // Pattern to find property values that might be missing closing quotes
+                var pattern = @"""([^""]*?)""?\s*,";
+
+                return Regex.Replace(json, pattern, match =>
+                {
+                    // Ensure there's a proper closing quote before the comma
+                    return $"\"{match.Groups[1].Value}\",";
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ Error in fixing unterminated strings: {ex.Message}");
+                return json;
+            }
+        }
+
+        public T CleanAndParseJson<T>(string jsonResponse) where T : new()
+        {
+            try
+            {
+                // First clean the JSON
+                string cleanedJson = CleanJsonResponse(jsonResponse);
+
+                // Try to parse the cleaned JSON
+                try
+                {
+                    return JsonConvert.DeserializeObject<T>(cleanedJson) ?? new T();
+                }
+                catch (JsonException firstEx)
+                {
+                    _logger.LogWarning($"⚠️ First JSON parse attempt failed: {firstEx.Message}");
+
+                    // Last resort - try with more tolerant settings
+                    var settings = new JsonSerializerSettings
+                    {
+                        Error = (sender, args) => {
+                            _logger.LogWarning($"JSON error suppressed: {args.ErrorContext.Error.Message}");
+                            args.ErrorContext.Handled = true;
+                        },
+                        MissingMemberHandling = MissingMemberHandling.Ignore,
+                        NullValueHandling = NullValueHandling.Ignore
+                    };
+
+                    return JsonConvert.DeserializeObject<T>(cleanedJson, settings) ?? new T();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ Failed to clean and parse JSON: {ex.Message}");
+                return new T();
             }
         }
     }

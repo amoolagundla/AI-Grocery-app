@@ -89,7 +89,7 @@ namespace OCR_AI_Grocery
                     string extractedText = await PerformOCR(Content);
                     log.LogInformation($"Successfully extracted OCR Text: {extractedText}"); 
                     await SaveToCosmosDb(eventData, extractedText, blobUrl, Metadata);
-                    await NewMethod(eventData, blobUrl, Metadata, extractedText);
+                    await SendEvent(eventData, blobUrl, Metadata, extractedText);
 
                     log.LogInformation($"Successfully SendMessageAsync to queue  ");
                 }
@@ -103,7 +103,7 @@ namespace OCR_AI_Grocery
             return string.Empty;
         }
 
-        private async Task NewMethod(EventGridEvent? eventData, string blobUrl, IDictionary<string, string> Metadata, string extractedText)
+        private async Task SendEvent(EventGridEvent? eventData, string blobUrl, IDictionary<string, string> Metadata, string extractedText)
         {
 
             var queueMessage = JsonConvert.SerializeObject(new { userEmail = Metadata?.TryGetValue("email", out var userId) == true ? userId : "Unknown", familyId = Metadata?.TryGetValue("familyId", out var familyId) == true ? familyId : "Unknown" });
@@ -160,6 +160,8 @@ namespace OCR_AI_Grocery
             [JsonProperty("BlobUrl")]
             public string BlobUrl { get; set; }
             public DateTime PurchasedDate { get; internal set; }
+
+            public bool Processed { get; set; } = false;
         }
 
         public class EventGridEvent

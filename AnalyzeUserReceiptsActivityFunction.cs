@@ -33,26 +33,26 @@ namespace OCR_AI_Grocery
         private readonly CosmosClient _cosmosClient;
         private readonly Container _container;
         private readonly HttpClient _httpClient;
-        private readonly ILogger _logger; 
+        private readonly ILogger _logger;
         private readonly ServiceBusClient _serviceBusClient;
         private CleanJsonResponseHelper cleanJsonResponseHelper;
         private readonly ServiceBusSender _notificationQueueSender;
 
-        public AnalyzeUserReceiptsActivityFunction(ILoggerFactory loggerFactory, HttpClient httpClient)
+        public AnalyzeUserReceiptsActivityFunction(
+            ILoggerFactory loggerFactory,
+            HttpClient httpClient,
+            CosmosClient cosmosClient,
+            ServiceBusClient serviceBusClient,
+            CleanJsonResponseHelper jsonResponseHelper)
         {
-
-            string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString") ?? string.Empty;
-            _cosmosClient = new CosmosClient(cosmosDbConnection);
+            _cosmosClient = cosmosClient;
             _logger = loggerFactory.CreateLogger<AnalyzeUserReceiptsActivityFunction>();
             _receiptsContainer = _cosmosClient.GetContainer("ReceiptsDB", "receipts");
             _shoppingListContainer = _cosmosClient.GetContainer("ReceiptsDB", "ShoppingLists");
-            _container = _cosmosClient.GetContainer("ReceiptsDB", "receipts"); 
-            cleanJsonResponseHelper = new CleanJsonResponseHelper(loggerFactory); 
-            string serviceBusConnectionString = Environment.GetEnvironmentVariable("NotificaitonQueueConnectionString")
-             ?? throw new InvalidOperationException("Service Bus connection string not found");
-
-            // Create Service Bus client and sender
-            _serviceBusClient = new ServiceBusClient(serviceBusConnectionString); 
+            _container = _receiptsContainer; // Use the same reference for simplicity
+            _httpClient = httpClient;
+            cleanJsonResponseHelper = jsonResponseHelper;
+            _serviceBusClient = serviceBusClient;
             _notificationQueueSender = _serviceBusClient.CreateSender("user-notifications-queue");
         }
 
@@ -69,34 +69,35 @@ namespace OCR_AI_Grocery
                     throw new ArgumentException("Missing UserEmail in queue message");
                 }
 
-                var receipts = await FetchReceipts(receiptMessage.FamilyId);
-                if (!receipts.Any())
+                // Fetch the latest unprocessed receipts
+                var unprocessedReceipts = await FetchUnprocessedReceipts(receiptMessage.FamilyId);
+                if (!unprocessedReceipts.Any())
                 {
-                    throw new InvalidOperationException($"No receipts found for {receiptMessage.FamilyId}");
+                    _logger.LogInformation($"No new unprocessed receipts found for {receiptMessage.FamilyId}");
+                    return;
                 }
 
-                var groupedItems = await AnalyzeReceiptsWithOpenAI(receipts);
-                if (groupedItems == null || !groupedItems.Any())
+                // Analyze only the new unprocessed receipts
+                var newGroupedItems = await AnalyzeReceiptsWithOpenAI(unprocessedReceipts);
+                if (newGroupedItems == null || !newGroupedItems.Any())
                 {
-                    throw new InvalidOperationException("No shopping list data extracted");
+                    throw new InvalidOperationException("No shopping list data extracted from new receipts");
                 }
 
-                var shoppingList = new ShoppingList
-                {
-                    Id = receiptMessage.FamilyId,
-                    UserId = receiptMessage.UserEmail,
-                    StoreItems = groupedItems,
-                    CreatedAt = DateTime.UtcNow
-                };
+                // Get existing shopping list or create a new one
+                ShoppingList existingShoppingList = await GetExistingShoppingList(receiptMessage.FamilyId);
 
-                // Use transactions or batch operations if possible
-                await _shoppingListContainer.UpsertItemAsync(shoppingList, new PartitionKey(shoppingList.UserId));
-                var storeName= await UpdateReceipts(receipts, groupedItems);
+                // Merge new items with existing items
+                var updatedShoppingList = MergeShoppingLists(existingShoppingList, newGroupedItems);
 
-                // Message is auto-completed only if no exceptions are thrown
+                // Save the updated shopping list
+                await _shoppingListContainer.UpsertItemAsync(updatedShoppingList, new PartitionKey(updatedShoppingList.UserId));
+
+                // Update receipt metadata (store name, etc.)
+                var storeName = await UpdateReceipts(unprocessedReceipts, newGroupedItems);
 
                 // After successful processing:
-                await SendNotification(receiptMessage, groupedItems, shoppingList, storeName);
+                await SendNotification(receiptMessage, newGroupedItems, updatedShoppingList, storeName);
             }
             catch (Exception ex)
             {
@@ -106,19 +107,80 @@ namespace OCR_AI_Grocery
             }
         }
 
-        private async Task SendNotification(ReceiptAnalysisMessage? receiptMessage, Dictionary<string, List<string>> groupedItems, ShoppingList shoppingList,string storeName)
+        private async Task<ShoppingList> GetExistingShoppingList(string familyId)
         {
+            try
+            {
+                // Try to get the existing shopping list
+                ItemResponse<ShoppingList> response = await _shoppingListContainer.ReadItemAsync<ShoppingList>(
+                    familyId,
+                    new PartitionKey(familyId)
+                );
+                return response.Resource;
+            }
+            catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // If not found, create a new empty shopping list
+                return new ShoppingList
+                {
+                    Id = familyId,
+                    UserId = familyId,
+                    StoreItems = new Dictionary<string, List<string>>(),
+                    CreatedAt = DateTime.UtcNow
+                };
+            }
+        }
+
+        private ShoppingList MergeShoppingLists(ShoppingList existingList, Dictionary<string, List<string>> newItems)
+        {
+            // Clone the existing shopping list to avoid modifying the original
+            var mergedList = new ShoppingList
+            {
+                Id = existingList.Id,
+                UserId = existingList.UserId,
+                StoreItems = new Dictionary<string, List<string>>(existingList.StoreItems),
+                CreatedAt = existingList.CreatedAt
+            };
+
+            // Add new items to the existing shopping list
+            foreach (var store in newItems)
+            {
+                string normalizedStoreName = NormalizeStoreName(store.Key);
+
+                if (!mergedList.StoreItems.ContainsKey(normalizedStoreName))
+                {
+                    mergedList.StoreItems[normalizedStoreName] = new List<string>();
+                }
+
+                // Add only unique items
+                foreach (var item in store.Value)
+                {
+                    if (!mergedList.StoreItems[normalizedStoreName].Contains(item, StringComparer.OrdinalIgnoreCase))
+                    {
+                        mergedList.StoreItems[normalizedStoreName].Add(item);
+                    }
+                }
+            }
+
+            return mergedList;
+        }
+
+        private async Task SendNotification(ReceiptAnalysisMessage? receiptMessage, Dictionary<string, List<string>> newItems, ShoppingList shoppingList, string storeName)
+        {
+            // Count total new items added
+            int totalNewItems = newItems.Sum(store => store.Value.Count);
+
             var notification = new NotificationMessage
             {
                 UserEmail = receiptMessage.UserEmail,
                 Title = storeName,
-                Body = $"Your shopping list has been updated with items from {groupedItems.Count} stores",
+                Body = $"Your shopping list has been updated with {totalNewItems} new items from {newItems.Count} stores",
                 Data = new Dictionary<string, string>
-                            {
-                                { "type", "shopping_list_update" },
-                                { "listId", shoppingList.Id }
-                            }
-                                    };
+                {
+                    { "type", "shopping_list_update" },
+                    { "listId", shoppingList.Id }
+                }
+            };
 
             await _notificationQueueSender.SendMessageAsync(
                 new ServiceBusMessage(JsonConvert.SerializeObject(notification))
@@ -141,11 +203,12 @@ namespace OCR_AI_Grocery
                         // Extract Store Name from Receipt Text 
                         if (!string.IsNullOrEmpty(extractedStoreName))
                         {
-                            extractedStoreName = extractedStoreName;  // Use extracted name if found
+                            extractedStoreName = extractedStoreName;  
                         }
 
                         receiptToUpdate.StoreName = extractedStoreName;
-                        receiptToUpdate.PurchasedDate = DateTime.UtcNow; // Adjust if AI extracts actual date
+                        receiptToUpdate.PurchasedDate = DateTime.UtcNow; 
+                        receiptToUpdate.Processed = true;  
 
                         await _receiptsContainer.ReplaceItemAsync(receiptToUpdate, receiptToUpdate.Id, new PartitionKey(receiptToUpdate.FamilyId));
                         _logger.LogInformation($"✅ Updated receipt {receiptToUpdate.Id} with Store: {extractedStoreName}");
@@ -154,6 +217,7 @@ namespace OCR_AI_Grocery
             }
             return returnString;
         }
+
         private string ExtractStoreName(string receiptText)
         {
             // Common store name patterns
@@ -168,6 +232,7 @@ namespace OCR_AI_Grocery
 
             return string.Empty;
         }
+
         private string NormalizeStoreName(string storeName)
         {
             if (string.IsNullOrEmpty(storeName))
@@ -180,11 +245,12 @@ namespace OCR_AI_Grocery
             return CultureInfo.CurrentCulture.TextInfo.ToTitleCase(storeName.ToLower().Trim());
         }
 
-
-        private async Task<List<ReceiptDocument>> FetchReceipts(string userEmail)
+        private async Task<List<ReceiptDocument>> FetchUnprocessedReceipts(string familyId)
         {
-            var query = new QueryDefinition("SELECT * FROM c WHERE c.FamilyId = @userEmail")
-                    .WithParameter("@userEmail", userEmail);
+            // Updated query to get only unprocessed receipts
+            var query = new QueryDefinition(
+                "SELECT * FROM c WHERE c.FamilyId = @familyId AND (c.Processed = false OR NOT IS_DEFINED(c.Processed))")
+                .WithParameter("@familyId", familyId);
 
             var receipts = new List<ReceiptDocument>();
 
@@ -197,7 +263,31 @@ namespace OCR_AI_Grocery
 
             if (receipts.Count == 0)
             {
-                _logger.LogWarning("⚠️ No receipts found for {UserEmail}", userEmail);
+                _logger.LogWarning("⚠️ No unprocessed receipts found for {FamilyId}", familyId);
+                return new List<ReceiptDocument>();
+            }
+
+            _logger.LogInformation($"Found {receipts.Count} unprocessed receipts for {familyId}");
+            return receipts;
+        }
+
+        private async Task<List<ReceiptDocument>> FetchReceipts(string familyId)
+        {
+            var query = new QueryDefinition("SELECT * FROM c WHERE c.FamilyId = @familyId")
+                    .WithParameter("@familyId", familyId);
+
+            var receipts = new List<ReceiptDocument>();
+
+            using FeedIterator<ReceiptDocument> queryIterator = _receiptsContainer.GetItemQueryIterator<ReceiptDocument>(query);
+            while (queryIterator.HasMoreResults)
+            {
+                FeedResponse<ReceiptDocument> response = await queryIterator.ReadNextAsync();
+                receipts.AddRange(response);
+            }
+
+            if (receipts.Count == 0)
+            {
+                _logger.LogWarning("⚠️ No receipts found for {FamilyId}", familyId);
                 return new List<ReceiptDocument>();
             }
 
@@ -251,9 +341,9 @@ namespace OCR_AI_Grocery
                 model = "gpt-4o-mini",
                 messages = new[]
                 {
-            new { role = "system", content = "You are a precise JSON formatter. Return only valid JSON without any additional text or explanations." },
-            new { role = "user", content = prompt }
-        },
+                    new { role = "system", content = "You are a precise JSON formatter. Return only valid JSON without any additional text or explanations." },
+                    new { role = "user", content = prompt }
+                },
                 max_tokens = 500,
                 temperature = 0.3  // Lower temperature for more consistent formatting
             };
@@ -289,14 +379,59 @@ namespace OCR_AI_Grocery
 
             try
             {
-                // Should now be clean JSON without need for additional cleaning
-                var result = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(aiGeneratedText);
-                return result ?? new Dictionary<string, List<string>>();
+                // First try to clean and sanitize the JSON response
+                string cleanedJson = aiGeneratedText;
+
+                // Remove markdown code block markers if present
+                cleanedJson = Regex.Replace(cleanedJson, @"```json\s*|\s*```", "");
+
+                // Extract just the JSON object if there's extra text
+                var jsonMatch = Regex.Match(cleanedJson, @"\{[\s\S]*\}");
+                if (jsonMatch.Success)
+                {
+                    cleanedJson = jsonMatch.Value;
+                }
+
+                // Log the cleaned JSON for debugging
+                _logger.LogInformation($"Cleaned JSON: {cleanedJson}");
+
+                try
+                {
+                    // Try to deserialize with standard settings
+                    var result = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(cleanedJson);
+                    return result ?? new Dictionary<string, List<string>>();
+                }
+                catch (JsonException)
+                {
+                    // If standard deserialization fails, try with more tolerant settings
+                    var settings = new JsonSerializerSettings
+                    {
+                        Error = (sender, args) => {
+                            _logger.LogWarning($"JSON error suppressed: {args.ErrorContext.Error.Message}");
+                            args.ErrorContext.Handled = true;
+                        },
+                        MissingMemberHandling = MissingMemberHandling.Ignore
+                    };
+
+                    var result = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(cleanedJson, settings);
+                    return result ?? new Dictionary<string, List<string>>();
+                }
             }
-            catch (JsonException ex)
+            catch (Exception ex)
             {
                 _logger.LogError($"❌ JSON parsing error: {ex.Message}");
-                return new Dictionary<string, List<string>>();
+
+                // Try to use the CleanJsonResponseHelper as a last resort
+                try
+                {
+                    var result = cleanJsonResponseHelper.CleanAndParseJson<Dictionary<string, List<string>>>(aiGeneratedText);
+                    return result ?? new Dictionary<string, List<string>>();
+                }
+                catch (Exception innerEx)
+                {
+                    _logger.LogError($"❌ Failed to clean JSON: {innerEx.Message}");
+                    return new Dictionary<string, List<string>>();
+                }
             }
         }
 
@@ -317,7 +452,6 @@ namespace OCR_AI_Grocery
             [JsonProperty("choices")]
             public List<Choice> Choices { get; set; } = new List<Choice>();
         }
-
     }
 
     // 📨 Service Bus Message Model
@@ -350,5 +484,6 @@ namespace OCR_AI_Grocery
         public string StoreName { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime PurchasedDate { get; set; }
+        public bool Processed { get; set; }
     }
 }
