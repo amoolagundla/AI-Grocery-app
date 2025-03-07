@@ -29,5 +29,7 @@ namespace OCR_AI_Grocery.models
 
         [JsonProperty("uploadDate")]
         public DateTime UploadDate { get; set; }
+        public DateTime PurchasedDate { get; internal set; }
+        public bool Processed { get; internal set; }
     }
 }

@@ -8,6 +8,8 @@ using OCR_AI_Grocery;
 using OCR_AI_Grocery.Notifications;
 using OCR_AI_Grocery.services;
 using Azure.Messaging.ServiceBus;
+using OCR_AI_Grocey.Services.Implementations;
+using OCR_AI_Grocey.Services.Interfaces;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWebApplication()
@@ -39,6 +41,9 @@ var host = new HostBuilder()
 
         // Register activity functions
         services.AddSingleton<AnalyzeUserReceiptsActivityFunction>();
+        services.AddScoped<IReceiptService, ReceiptService>(); 
+        services.AddScoped<IBlobService, BlobService>();
+        services.AddScoped<IOCRService, OCRService>();
 
         // Add logging
         services.AddLogging();
