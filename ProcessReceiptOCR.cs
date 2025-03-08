@@ -37,8 +37,7 @@ namespace OCR_AI_Grocery
         public async Task<string> EventHubFunction(
             [EventHubTrigger("reciept", Connection = "EventHubConnection")] string[] events,
             FunctionContext context)
-        {
-            _logger.LogInformation($"ProcessReceiptOCR function processing event: {events}");
+        { 
             try
             {
                 await _receiptProcessingService.ProcessReceiptEvents(events);

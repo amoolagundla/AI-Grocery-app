@@ -36,6 +36,7 @@
 
 		<!-- Azure Identity (for Managed Identity Authentication if needed) -->
 		<PackageReference Include="Azure.Identity" Version="1.13.2" />
+		<PackageReference Include="Microsoft.Azure.ServiceBus" Version="5.2.0" />
 		<PackageReference Include="Microsoft.Azure.WebJobs.Extensions.DurableTask" Version="3.0.3" />
 		<PackageReference Include="Microsoft.Azure.WebJobs.Extensions.Storage" Version="5.3.4" />
 

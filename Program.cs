@@ -10,6 +10,7 @@ using OCR_AI_Grocery.services;
 using Azure.Messaging.ServiceBus;
 using OCR_AI_Grocey.Services.Implementations;
 using OCR_AI_Grocey.Services.Interfaces;
+using Microsoft.Azure.ServiceBus;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWebApplication()
@@ -31,23 +32,77 @@ var host = new HostBuilder()
         // Add helper services
         services.AddSingleton<CleanJsonResponseHelper>();
 
-        // Add Cosmos DB client
+        // Add Cosmos DB client with validation
         var cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString");
-        services.AddSingleton(s => new CosmosClient(cosmosDbConnection));
+        if (string.IsNullOrEmpty(cosmosDbConnection))
+        {
+            throw new InvalidOperationException("CosmosDBConnectionString configuration is missing");
+        }
+        services.AddSingleton(s =>
+        {
+            var clientOptions = new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                SerializerOptions = new CosmosSerializationOptions
+                {
+                    PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
+                }
+            };
+            return new CosmosClient(cosmosDbConnection, clientOptions);
+        });
 
-        // Add Service Bus client
+        // Add Service Bus client with validation
         var notificationQueueConnectionString = Environment.GetEnvironmentVariable("NotificaitonQueueConnectionString");
-        services.AddSingleton(s => new ServiceBusClient(notificationQueueConnectionString));
+        var receiptAnalysisQueueName = Environment.GetEnvironmentVariable("ReceiptAnalysisQueueName") ?? "receipt-analysis-queue";
+
+        if (string.IsNullOrEmpty(notificationQueueConnectionString))
+        {
+            throw new InvalidOperationException("NotificaitonQueueConnectionString configuration is missing");
+        }
+        var serviceBusConnectionString = Environment.GetEnvironmentVariable("NotificaitonQueueConnectionString");
+        if (string.IsNullOrEmpty(serviceBusConnectionString))
+        {
+            throw new InvalidOperationException("NotificaitonQueueConnectionString configuration is missing");
+        }
+        var connectionStringBuilder = new ServiceBusConnectionStringBuilder(serviceBusConnectionString);
+        var queueName = connectionStringBuilder.EntityPath;
+
+        if (string.IsNullOrEmpty(queueName))
+        {
+            queueName = Environment.GetEnvironmentVariable("ReceiptAnalysisQueueName") ?? "receipt-analysis-queue";
+        }
+
+        services.AddSingleton(s => new ServiceBusClient(serviceBusConnectionString));
+        services.AddSingleton(s =>
+        {
+            var client = s.GetRequiredService<ServiceBusClient>();
+            return client.CreateSender(queueName);
+        });
+
+        // Register services
+        services.AddScoped<IReceiptService, ReceiptService>();
+        services.AddScoped<IBlobService, BlobService>();
+        services.AddScoped<IOCRService, OCRService>();
+        services.AddScoped<IReceiptProcessingService, ReceiptProcessingService>();
 
         // Register activity functions
         services.AddSingleton<AnalyzeUserReceiptsActivityFunction>();
-        services.AddScoped<IReceiptService, ReceiptService>(); 
-        services.AddScoped<IBlobService, BlobService>();
-        services.AddScoped<IOCRService, OCRService>();
 
-        // Add logging
-        services.AddLogging();
+        // Add logging with more detailed configuration
+        services.AddLogging(builder =>
+        {
+            builder.AddConsole();
+            builder.SetMinimumLevel(LogLevel.Debug);
+        });
     })
     .Build();
 
-host.Run();
+try
+{
+    host.Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Critical error starting the application: {ex}");
+    throw;
+}
