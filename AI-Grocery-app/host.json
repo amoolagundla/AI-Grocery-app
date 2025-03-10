@@ -1,0 +1,34 @@
+{
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "excludedTypes": "Request"
+      },
+      "enableLiveMetricsFilters": true
+    }
+  },
+  "extensions": {
+    "http": {
+      "routePrefix": "",
+      "cors": {
+        "allowedOrigins": [ "http://localhost:4200" ],
+        "allowedMethods": [ "GET", "POST", "PUT", "DELETE", "OPTIONS" ],
+        "maxAge": 3600
+      }
+    },
+    "eventHub": {
+      "batchCheckpointFrequency": 10,
+      "eventProcessorOptions": {
+        "initialOffsetOptions": {
+          "type": "FromEnqueuedTime"
+        }
+      }
+    }
+  },
+  "Host": {
+    "LocalHttpPort": 4200,
+    "CORS": "*"
+  }
+}
