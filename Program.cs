@@ -11,6 +11,7 @@ using Azure.Messaging.ServiceBus;
 using OCR_AI_Grocey.Services.Implementations;
 using OCR_AI_Grocey.Services.Interfaces;
 using Microsoft.Azure.ServiceBus;
+using OCR_AI_Grocey.Services.Repos;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWebApplication()
@@ -78,15 +79,20 @@ var host = new HostBuilder()
             var client = s.GetRequiredService<ServiceBusClient>();
             return client.CreateSender(queueName);
         });
-
+        services.AddHttpClient();
         // Register services
         services.AddScoped<IReceiptService, ReceiptService>();
         services.AddScoped<IBlobService, BlobService>();
         services.AddScoped<IOCRService, OCRService>();
         services.AddScoped<IReceiptProcessingService, ReceiptProcessingService>();
-
+        services.AddScoped<IReceiptRepository, ReceiptRepository>();
+        services.AddScoped<IShoppingListRepository, ShoppingListRepository>();
+        services.AddScoped<IOpenAIService, OpenAIService>();
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<IAnalyzeUserReceiptsService, AnalyzeUserReceiptsService>();   
+        services.AddSingleton<CleanJsonResponseHelper>();
         // Register activity functions
-        services.AddSingleton<AnalyzeUserReceiptsActivityFunction>();
+        services.AddSingleton<AnalyzeUserReceiptsActivityFunction>(); 
 
         // Add logging with more detailed configuration
         services.AddLogging(builder =>

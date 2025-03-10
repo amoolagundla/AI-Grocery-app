@@ -7,6 +7,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using OCR_AI_Grocery.models;
+using OCR_AI_Grocery.Models;
 
 namespace OCR_AI_Grocery
 {
@@ -46,48 +47,18 @@ namespace OCR_AI_Grocery
             _logger.LogInformation($"Fetching receipts for FamilyId: {userEmail}");
 
             try
-            {
-                // Step 1: Query Receipts for the given FamilyId
-                var receiptsQuery = new QueryDefinition("SELECT DISTINCT c.UserId FROM c WHERE c.FamilyId = @familyId")
-                                    .WithParameter("@familyId", userEmail);
-
-                var emailSet = new HashSet<string>();
-                using (FeedIterator<Receipt> resultSetIterator = _receiptsContainer.GetItemQueryIterator<Receipt>(receiptsQuery))
-                {
-                    while (resultSetIterator.HasMoreResults)
-                    {
-                        FeedResponse<Receipt> response = await resultSetIterator.ReadNextAsync();
-                        foreach (var receipt in response)
-                        {
-                            if (!string.IsNullOrEmpty(receipt.UserId))
-                            {
-                                emailSet.Add(receipt.UserId);
-                            }
-                        }
-                    }
-                }
-
-                if (!emailSet.Any())
-                {
-                    return new NotFoundObjectResult(new { message = "No receipts found for this family." });
-                }
-
-                _logger.LogInformation($"Found {emailSet.Count} unique emails in receipts.");
-
+            { 
                 // Step 2: Query ShoppingLists for extracted emails
                 var shoppingLists = new List<dynamic>();
-                foreach (var email in emailSet)
-                {
-                    var shoppingListQuery = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @email")
-                                            .WithParameter("@email", email);
+                var shoppingListQuery = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @email")
+                                             .WithParameter("@email", userEmail);
 
-                    using (FeedIterator<ShoppingList> iterator = _shoppingListsContainer.GetItemQueryIterator<ShoppingList>(shoppingListQuery))
+                using (FeedIterator<ShoppingList> iterator = _shoppingListsContainer.GetItemQueryIterator<ShoppingList>(shoppingListQuery))
+                {
+                    while (iterator.HasMoreResults)
                     {
-                        while (iterator.HasMoreResults)
-                        {
-                            FeedResponse<ShoppingList> response = await iterator.ReadNextAsync();
-                            shoppingLists.AddRange(response);
-                        }
+                        FeedResponse<ShoppingList> response = await iterator.ReadNextAsync();
+                        shoppingLists.AddRange(response);
                     }
                 }
 
