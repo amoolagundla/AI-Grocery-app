@@ -41,9 +41,6 @@ jobs:
           cd ./publish
           zip -r ../publish.zip .
 
-      - name: 'Move Zip to Root'
-        run: mv ./publish.zip .
-
       - name: 'Install Azure CLI'
         run: |
           curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
