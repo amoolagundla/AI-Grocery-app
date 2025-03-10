@@ -1,38 +1,29 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.WebJobs;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using OCR_AI_Grocery.Family.models;
 using OCR_AI_Grocery.models;
+using OCR_AI_Grocery.Services.Repositories;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Threading.Tasks;
-using Container = Microsoft.Azure.Cosmos.Container;
-using FamilyInvite = OCR_AI_Grocery.models.FamilyInvite;
+using System.IO;
+using System.Linq; 
 
 namespace OCR_AI_Grocery
 {
     public class FamilyFunctions
     {
         private readonly ILogger _logger;
-        private readonly CosmosClient _cosmosClient;
-        private readonly Container _familyContainer;
-        private readonly Container _familyJunctionContainer;
-        private readonly Container _invitesContainer;
+        private readonly IFamilyRepository _familyRepository;
 
-        public FamilyFunctions(ILoggerFactory loggerFactory)
+        public FamilyFunctions(
+            ILoggerFactory loggerFactory,
+            IFamilyRepository familyRepository)
         {
             _logger = loggerFactory.CreateLogger<FamilyFunctions>();
-            string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString") ?? string.Empty;
-            _cosmosClient = new CosmosClient(cosmosDbConnection);
-
-            _familyContainer = _cosmosClient.GetContainer("ReceiptsDB", "Families");
-            _familyJunctionContainer = _cosmosClient.GetContainer("ReceiptsDB", "FamilyJunction");
-            _invitesContainer = _cosmosClient.GetContainer("ReceiptsDB", "FamilyInvites");
+            _familyRepository = familyRepository;
         }
 
         // GET /api/family/byEmail/{email}
@@ -45,38 +36,7 @@ namespace OCR_AI_Grocery
             {
                 _logger.LogInformation($"Fetching families for email: {email}");
 
-                var query = new QueryDefinition(
-                    "SELECT * FROM c WHERE c.InvitedUserEmail = @email")
-                    .WithParameter("@email", email.ToLower());
-
-                var families = new List<FamilyEntity>();
-                using var iterator = _familyJunctionContainer.GetItemQueryIterator<FamilyJunction>(query);
-
-                while (iterator.HasMoreResults)
-                {
-                    var response = await iterator.ReadNextAsync();
-                    foreach (var junction in response)
-                    {
-                        try
-                        {
-                            var family = await _familyContainer.ReadItemAsync<FamilyEntity>(
-                                junction.FamilyId,
-                                new PartitionKey(junction.FamilyId)
-                            );
-                            families.Add(new FamilyEntity
-                            {
-                                Id = family.Resource.Id,
-                                FamilyName = family.Resource.FamilyName,
-                                PrimaryEmail = family.Resource.PrimaryEmail
-                            });
-                        }
-                        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-                        {
-                            _logger.LogWarning($"Family not found for junction: {junction.FamilyId}");
-                            continue;
-                        }
-                    }
-                }
+                var families = await _familyRepository.GetFamiliesByEmail(email);
 
                 return new OkObjectResult(families);
             }
@@ -86,7 +46,6 @@ namespace OCR_AI_Grocery
                 return new StatusCodeResult(StatusCodes.Status500InternalServerError);
             }
         }
-
 
         // POST /api/family/{familyId}/inviteMember
         [Function("InviteFamilyMember")]
@@ -108,33 +67,25 @@ namespace OCR_AI_Grocery
                 }
 
                 // Check for existing pending invite
-                var query = new QueryDefinition(
-                    "SELECT * FROM c WHERE c.InvitedUserEmail = @email AND c.familyId = @familyId AND c.status = 'pending'")
-                    .WithParameter("@email", invitedUserEmail)
-                    .WithParameter("@familyId", familyId);
+                bool hasPendingInvite = await _familyRepository.CheckForPendingInvite(invitedUserEmail, familyId);
 
-                using var iterator = _invitesContainer.GetItemQueryIterator<FamilyInvite>(query);
-                var response = await iterator.ReadNextAsync();
-
-                if (response.Count > 0)
+                if (hasPendingInvite)
                 {
                     return new ConflictObjectResult(new { message = "Pending invitation already exists." });
                 }
 
                 var invite = new FamilyInvite
                 {
-                     
+                    InviteId = Guid.NewGuid().ToString(),
                     FamilyId = familyId,
                     InvitedUserEmail = invitedUserEmail,
-                    InvitedId = invitedBy,
+                    InvitedBy = invitedBy,
                     Status = "pending",
                     CreatedAt = DateTime.UtcNow
                 };
 
-                await _invitesContainer.UpsertItemAsync(
-                   invite,
-                   new PartitionKey(invite.FamilyId)
-               );
+                await _familyRepository.CreateFamilyInvite(invite);
+
                 return new OkObjectResult(new { message = "Invitation sent successfully." });
             }
             catch (Exception ex)
@@ -146,8 +97,8 @@ namespace OCR_AI_Grocery
 
         [Function("ProcessFamilyInvite")]
         public async Task<IActionResult> ProcessInvite(
-     [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "family/invites/{inviteId}/{invitedUserEmail}/process")] HttpRequest req,
-     string inviteId, string invitedUserEmail)
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "family/invites/{inviteId}/{invitedUserEmail}/process")] HttpRequest req,
+            string inviteId, string invitedUserEmail)
         {
             try
             {
@@ -161,18 +112,7 @@ namespace OCR_AI_Grocery
                 }
 
                 // Find the invite
-                var query = new QueryDefinition(
-                    "SELECT * FROM c WHERE c.id = @inviteId and c.InvitedUserEmail=@invitedUserEmail and c.Status = 'pending'")
-                    .WithParameter("@inviteId", inviteId)
-                    .WithParameter("@invitedUserEmail", invitedUserEmail);
-
-                var invites = new List<FamilyInvite>();
-                using var iterator = _invitesContainer.GetItemQueryIterator<FamilyInvite>(query);
-                while (iterator.HasMoreResults)
-                {
-                    var response = await iterator.ReadNextAsync();
-                    invites.AddRange(response);
-                }
+                var invites = await _familyRepository.GetPendingInvites(inviteId, invitedUserEmail);
 
                 if (!invites.Any())
                 {
@@ -184,20 +124,10 @@ namespace OCR_AI_Grocery
                 if (action == "accept")
                 {
                     // Check if junction already exists
-                    var junctionQuery = new QueryDefinition(
-                        "SELECT * FROM c WHERE c.Email = @email AND c.FamilyId = @familyId")
-                        .WithParameter("@email", invite.InvitedUserEmail)
-                        .WithParameter("@familyId", invite.FamilyId);
+                    bool junctionExists = await _familyRepository.CheckFamilyJunctionExists(
+                        invite.InvitedUserEmail, invite.FamilyId);
 
-                    var existingJunctions = new List<FamilyJunction>();
-                    using var junctionIterator = _familyJunctionContainer.GetItemQueryIterator<FamilyJunction>(junctionQuery);
-                    while (junctionIterator.HasMoreResults)
-                    {
-                        var response = await junctionIterator.ReadNextAsync();
-                        existingJunctions.AddRange(response);
-                    }
-
-                    if (!existingJunctions.Any())
+                    if (!junctionExists)
                     {
                         var junction = new FamilyJunction
                         {
@@ -209,39 +139,21 @@ namespace OCR_AI_Grocery
                             PartitionKey = invite.FamilyId  // Make sure this matches your model
                         };
 
-                        await _familyJunctionContainer.CreateItemAsync(
-                            junction,
-                            new PartitionKey(junction.PartitionKey)
-                        );
+                        await _familyRepository.CreateFamilyJunction(junction);
                     }
                 }
 
                 // Update the invite
                 invite.Status = action == "accept" ? "accepted" : "rejected";
                 invite.ResponseDate = DateTime.UtcNow;
-                invite.PartitionKey = invitedUserEmail;  // Make sure this matches your model
 
-               
-                await _invitesContainer.UpsertItemAsync(
-                    invite, 
-                    new PartitionKey(invite.FamilyId)
-                );
+                await _familyRepository.UpdateFamilyInvite(invite);
 
                 return new OkObjectResult(new
                 {
                     message = $"Invitation {action}ed successfully.",
                     familyId = invite.FamilyId
                 });
-            }
-            catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                _logger.LogError($"CosmosDB Not Found Error: {ex.Message}");
-                return new NotFoundObjectResult(new { message = "Invite not found." });
-            }
-            catch (CosmosException ex)
-            {
-                _logger.LogError($"CosmosDB Error: {ex.Message}");
-                return new StatusCodeResult((int)ex.StatusCode);
             }
             catch (Exception ex)
             {
@@ -251,57 +163,27 @@ namespace OCR_AI_Grocery
         }
 
         [Function("GetFamilyDetails")]
-        public async Task<IActionResult> Run(
+        public async Task<IActionResult> GetFamilyDetails(
            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "family/{id}")] HttpRequest req,
-           string id,
-           ILogger log)
+           string id)
         {
             try
             {
-                QueryDefinition query = new QueryDefinition(
-           "SELECT * FROM c WHERE c.id = @id")
-           .WithParameter("@id", id);
+                _logger.LogInformation($"Fetching details for family: {id}");
 
-                var families = new List<FamilyEntity>();
+                var family = await _familyRepository.GetFamilyById(id);
 
-                using var iterator = _familyContainer.GetItemQueryIterator<FamilyJunction>(query);
-                while (iterator.HasMoreResults)
+                if (family == null)
                 {
-                    var response = await iterator.ReadNextAsync();
-                    foreach (var junction in response)
-                    {
-                        try
-                        {
-                            var family = await _familyContainer.ReadItemAsync<FamilyEntity>(
-                                junction.FamilyId,
-                                new PartitionKey(junction.FamilyId)
-                            );
-
-                            families.Add(new FamilyEntity
-                            {
-                                Id = family.Resource.Id,
-                                FamilyName = family.Resource.FamilyName,
-                                PrimaryEmail = family.Resource.PrimaryEmail
-                            });
-                        }
-                        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-                        {
-                            log.LogWarning($"Family not found for junction: {junction.FamilyId}");
-                            continue;
-                        }
-                    }
+                    return new NotFoundObjectResult($"Family with ID {id} not found");
                 }
 
-                return new OkObjectResult(families);
-            }
-            catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                return new NotFoundObjectResult($"Family with ID {id} not found");
+                return new OkObjectResult(family);
             }
             catch (Exception ex)
             {
-                log.LogError($"Error retrieving family: {ex.Message}");
-                return new StatusCodeResult(500);
+                _logger.LogError($"Error retrieving family: {ex.Message}");
+                return new StatusCodeResult(StatusCodes.Status500InternalServerError);
             }
         }
     }

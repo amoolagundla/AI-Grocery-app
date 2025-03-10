@@ -12,6 +12,7 @@ using OCR_AI_Grocey.Services.Implementations;
 using OCR_AI_Grocey.Services.Interfaces;
 using Microsoft.Azure.ServiceBus;
 using OCR_AI_Grocey.Services.Repos;
+using OCR_AI_Grocery.Services.Repositories;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWebApplication()
@@ -88,7 +89,8 @@ var host = new HostBuilder()
         services.AddScoped<IReceiptRepository, ReceiptRepository>();
         services.AddScoped<IShoppingListRepository, ShoppingListRepository>();
         services.AddScoped<IOpenAIService, OpenAIService>();
-        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<INotificationService, NotificationService>(); 
+        services.AddSingleton<IFamilyRepository, FamilyRepository>();
         services.AddScoped<IAnalyzeUserReceiptsService, AnalyzeUserReceiptsService>();   
         services.AddSingleton<CleanJsonResponseHelper>();
         // Register activity functions

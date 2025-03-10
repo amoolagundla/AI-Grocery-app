@@ -1,78 +1,67 @@
-using Azure.Messaging.ServiceBus;
-using Azure.Storage.Queues;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using OCR_AI_Grocery.models;
-using OCR_AI_Grocery.Models;
+using OCR_AI_Grocey.Services.Interfaces;
+using System;
+using System.Linq;
+using System.Net;
+using System.Threading.Tasks;
 
-namespace OCR_AI_Grocery
+namespace OCR_AI_Grocery.Functions
 {
-    public class GetShoppingListByFamilyFunction
+    public class ShoppingListFunctions
     {
         private readonly ILogger _logger;
-        private readonly CosmosClient _cosmosClient;
-        private readonly Container _container; 
-        private QueueClient _queueClient; 
-        private readonly ServiceBusSender _queueSender;
-        private readonly ServiceBusClient _serviceBusClient;
-        private readonly Container _receiptsContainer;
-        private readonly Container _shoppingListsContainer;
+        private readonly IShoppingListRepository _shoppingListRepository;
 
-        public GetShoppingListByFamilyFunction(ILoggerFactory loggerFactory)
+        public ShoppingListFunctions(
+            ILoggerFactory loggerFactory,
+            IShoppingListRepository shoppingListRepository)
         {
-            _logger = loggerFactory.CreateLogger<ProcessReceiptOCR>();
-            string cosmosDbConnection = Environment.GetEnvironmentVariable("CosmosDBConnectionString") ?? string.Empty;
-            _cosmosClient = new CosmosClient(cosmosDbConnection);
-            _container = _cosmosClient.GetContainer("ReceiptsDB", "receipts");
-            _receiptsContainer = _cosmosClient.GetContainer("ReceiptsDB", "receipts");
-            _shoppingListsContainer = _cosmosClient.GetContainer("ReceiptsDB", "ShoppingLists");
-            string serviceBusConnectionString = Environment.GetEnvironmentVariable("QueueConnectionString")
-                ?? throw new InvalidOperationException("Service Bus connection string not found");
-
-            // Create Service Bus client and sender
-            _serviceBusClient = new ServiceBusClient(serviceBusConnectionString);
-            _queueSender = _serviceBusClient.CreateSender("receipt-analysis-queue");
-
+            _logger = loggerFactory.CreateLogger<ShoppingListFunctions>();
+            _shoppingListRepository = shoppingListRepository;
         }
 
         [Function("GetShoppingListsForFamily")]
-        public async Task<IActionResult> Run(
-         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "family/{userEmail}/shoppingLists")] HttpRequestData req,
-         string userEmail)
+        public async Task<HttpResponseData> Run(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "family/{userEmail}/shoppingLists")] HttpRequestData req,
+            string userEmail)
         {
-            _logger.LogInformation($"Fetching receipts for FamilyId: {userEmail}");
+            _logger.LogInformation($"Fetching shopping lists for family ID: {userEmail}");
 
             try
-            { 
-                // Step 2: Query ShoppingLists for extracted emails
-                var shoppingLists = new List<dynamic>();
-                var shoppingListQuery = new QueryDefinition("SELECT * FROM c WHERE c.UserId = @email")
-                                             .WithParameter("@email", userEmail);
+            {
+                // Use the repository to get shopping lists
+                var shoppingLists = await _shoppingListRepository.GetShoppingListsForFamily(userEmail);
 
-                using (FeedIterator<ShoppingList> iterator = _shoppingListsContainer.GetItemQueryIterator<ShoppingList>(shoppingListQuery))
+                // Create the appropriate response
+                HttpResponseData response;
+                if (shoppingLists == null || !shoppingLists.Any())
                 {
-                    while (iterator.HasMoreResults)
-                    {
-                        FeedResponse<ShoppingList> response = await iterator.ReadNextAsync();
-                        shoppingLists.AddRange(response);
-                    }
+                    _logger.LogInformation($"No shopping lists found for family: {userEmail}");
+                    response = req.CreateResponse(HttpStatusCode.NotFound);
+                    await response.WriteAsJsonAsync(new { message = "No shopping lists found for this family." });
+                }
+                else
+                {
+                    _logger.LogInformation($"Retrieved {shoppingLists.Count} shopping lists for family: {userEmail}");
+                    response = req.CreateResponse(HttpStatusCode.OK);
+                    await response.WriteAsJsonAsync(shoppingLists);
                 }
 
-                if (!shoppingLists.Any())
-                {
-                    return new NotFoundObjectResult(new { message = "No shopping lists found for this family." });
-                }
-
-                return new OkObjectResult(shoppingLists);
+                return response;
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Error fetching shopping lists: {ex.Message}");
-                return new ObjectResult(new { message = "Error retrieving shopping lists", error = ex.Message }) { StatusCode = 500 };
+
+                var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await errorResponse.WriteAsJsonAsync(new
+                {
+                    message = "Error retrieving shopping lists",
+                    error = ex.Message
+                });
+                return errorResponse;
             }
         }
     }
