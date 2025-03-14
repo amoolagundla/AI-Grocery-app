@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Azure.Messaging.ServiceBus;
 using System.Text.Json;
+using OCR_AI_Grocey.Services.Helpers;
 
 namespace OCR_AI_Grocey.Services.Implementations
 {
@@ -19,20 +20,21 @@ namespace OCR_AI_Grocey.Services.Implementations
         private readonly IReceiptService _receiptService;
         private readonly IBlobService _blobService;
         private readonly IOCRService _ocrService;
-        private readonly ServiceBusSender _queueSender;
+        private readonly IAnalysisQueue analysisQueue;
 
         public ReceiptProcessingService(
-            ILogger<ReceiptProcessingService> logger,
-            IReceiptService receiptService,
-            IBlobService blobService,
-            IOCRService ocrService,
-            ServiceBusSender queueSender)
+                ILogger<ReceiptProcessingService> logger,
+                IReceiptService receiptService,
+                IBlobService blobService,
+                IOCRService ocrService,
+                AnalysisSender serviceBusSender,
+                IAnalysisQueue analysisQueue) // Change to inject the sender directly
         {
             _logger = logger;
             _receiptService = receiptService;
             _blobService = blobService;
             _ocrService = ocrService;
-            _queueSender = queueSender;
+            this.analysisQueue = analysisQueue;
         }
 
         public async Task ProcessReceiptEvents(string[] events)
@@ -77,7 +79,7 @@ namespace OCR_AI_Grocey.Services.Implementations
                 _logger.LogInformation($"Successfully extracted OCR Text: {extractedText}");
 
                 await SaveReceiptToDatabase(eventData, extractedText, blobUrl, Metadata);
-                await SendToAnalysisQueue(Metadata, extractedText);
+                await analysisQueue.SendToAnalysisQueue(Metadata, extractedText);
             }
             catch (Exception ex)
             {
@@ -86,23 +88,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             }
         }
 
-        private async Task SendToAnalysisQueue(IDictionary<string, string> metadata, string extractedText)
-        {
-            var queueMessage = JsonConvert.SerializeObject(new
-            {
-                userEmail = metadata?.TryGetValue("email", out var userId) == true ? userId : "Unknown",
-                familyId = metadata?.TryGetValue("familyId", out var familyId) == true ? familyId : "Unknown"
-            });
-
-            var message = new ServiceBusMessage(Encoding.UTF8.GetBytes(queueMessage))
-            {
-                ContentType = "application/json",
-                Subject = "ReceiptAnalysis",
-                MessageId = Guid.NewGuid().ToString()
-            };
-
-            await _queueSender.SendMessageAsync(message);
-        }
+       
 
         private async Task SaveReceiptToDatabase(EventGridEvent eventData, string extractedText, string blobUrl, IDictionary<string, string> metadata)
         {

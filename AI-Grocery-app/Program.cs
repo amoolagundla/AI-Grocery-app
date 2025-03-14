@@ -13,6 +13,7 @@ using OCR_AI_Grocey.Services.Interfaces;
 using Microsoft.Azure.ServiceBus;
 using OCR_AI_Grocey.Services.Repos;
 using OCR_AI_Grocery.Services.Repositories;
+using OCR_AI_Grocey.Services.Helpers;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWebApplication()
@@ -53,36 +54,39 @@ var host = new HostBuilder()
             return new CosmosClient(cosmosDbConnection, clientOptions);
         });
 
-        // Add Service Bus client with validation
         var notificationQueueConnectionString = Environment.GetEnvironmentVariable("NotificaitonQueueConnectionString");
-        var receiptAnalysisQueueName = Environment.GetEnvironmentVariable("ReceiptAnalysisQueueName") ?? "receipt-analysis-queue";
-
         if (string.IsNullOrEmpty(notificationQueueConnectionString))
         {
             throw new InvalidOperationException("NotificaitonQueueConnectionString configuration is missing");
         }
-        var serviceBusConnectionString = Environment.GetEnvironmentVariable("NotificaitonQueueConnectionString");
-        if (string.IsNullOrEmpty(serviceBusConnectionString))
-        {
-            throw new InvalidOperationException("NotificaitonQueueConnectionString configuration is missing");
-        }
-        var connectionStringBuilder = new ServiceBusConnectionStringBuilder(serviceBusConnectionString);
-        var queueName = connectionStringBuilder.EntityPath;
 
-        if (string.IsNullOrEmpty(queueName))
+        var receiptQueueConnectionString = Environment.GetEnvironmentVariable("QueueConnectionString");
+        if (string.IsNullOrEmpty(receiptQueueConnectionString))
         {
-            queueName = Environment.GetEnvironmentVariable("ReceiptAnalysisQueueName") ?? "receipt-analysis-queue";
+            throw new InvalidOperationException("QueueConnectionString configuration is missing");
         }
 
-        services.AddSingleton(s => new ServiceBusClient(serviceBusConnectionString));
-        services.AddSingleton(s =>
-        {
-            var client = s.GetRequiredService<ServiceBusClient>();
-            return client.CreateSender(queueName);
-        }); 
+        // Register clients - we need separate clients since they use different connection strings
+        services.AddSingleton(new ServiceBusClient(receiptQueueConnectionString));
+        services.AddSingleton<NotificationClient>(new NotificationClient(notificationQueueConnectionString));
+
+        // Register senders using wrapper classes to avoid DI conflicts
+        services.AddSingleton<AnalysisSender>(new AnalysisSender(
+            new ServiceBusClient(receiptQueueConnectionString).CreateSender("receipt-analysis-queue")
+        ));
+
+        services.AddSingleton<NotificationSender>(new NotificationSender(
+            new ServiceBusClient(notificationQueueConnectionString).CreateSender("user-notifications-queue")
+        ));
+
+        // Add service registrations that depend on these senders
+        services.AddScoped<IReceiptProcessingService, ReceiptProcessingService>();
+        services.AddScoped<INotificationService, NotificationService>();
+
         services.AddHttpClient();
         // Register services
         services.AddScoped<IReceiptService, ReceiptService>();
+        services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IBlobService, BlobService>();
         services.AddScoped<IOCRService, OCRService>();
         services.AddScoped<IReceiptProcessingService, ReceiptProcessingService>();
@@ -91,6 +95,7 @@ var host = new HostBuilder()
         services.AddScoped<IOpenAIService, OpenAIService>();
         services.AddScoped<INotificationService, NotificationService>(); 
         services.AddSingleton<IFamilyRepository, FamilyRepository>();
+        services.AddSingleton<IAnalysisQueue, AnalysisQueue>();
         services.AddScoped<IAnalyzeUserReceiptsService, AnalyzeUserReceiptsService>();   
         services.AddSingleton<CleanJsonResponseHelper>();
         // Register activity functions
@@ -114,3 +119,4 @@ catch (Exception ex)
     Console.WriteLine($"Critical error starting the application: {ex}");
     throw;
 }
+

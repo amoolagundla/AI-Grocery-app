@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using OCR_AI_Grocery.Models;
+using OCR_AI_Grocey.Services.Helpers;
 using OCR_AI_Grocey.Services.Interfaces;
 using System;
 using System.Collections.Generic;
@@ -13,15 +14,13 @@ namespace OCR_AI_Grocey.Services.Implementations
 {
     public class NotificationService : INotificationService
     {
-        private readonly ServiceBusSender _notificationQueueSender;
         private readonly ILogger<NotificationService> _logger;
+        private readonly NotificationSender _sender;
 
-        public NotificationService(
-            ServiceBusClient serviceBusClient,
-            ILoggerFactory loggerFactory)
+        public NotificationService(NotificationSender notificationSender, ILoggerFactory loggerFactory)
         {
-            _notificationQueueSender = serviceBusClient.CreateSender("user-notifications-queue");
             _logger = loggerFactory.CreateLogger<NotificationService>();
+            _sender = notificationSender;
         }
 
         public async Task SendNotification(
@@ -43,7 +42,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             };
 
             var serviceBusMessage = new ServiceBusMessage(JsonConvert.SerializeObject(notification));
-            await _notificationQueueSender.SendMessageAsync(serviceBusMessage);
+            await _sender.SendMessageAsync(serviceBusMessage);
             _logger.LogInformation($"Sent notification to {message.UserEmail}");
         }
     }
