@@ -1,13 +1,21 @@
 ﻿using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
 using Moq;
-using Newtonsoft.Json; 
+using Newtonsoft.Json;
 using OCR_AI_Grocery.Models;
 using OCR_AI_Grocery.Models.Receipt;
+using OCR_AI_Grocey.Services.Helpers;
 using OCR_AI_Grocey.Services.Implementations;
 using OCR_AI_Grocey.Services.Interfaces;
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
+using Xunit;
+using Moq.Language;
+using Moq.Protected;
 using StorageDiagnostics = OCR_AI_Grocery.Models.StorageDiagnostics;
+
 namespace OCR_AI_Grocery_Tests
 {
     public class ReceiptProcessingServiceTests
@@ -16,7 +24,8 @@ namespace OCR_AI_Grocery_Tests
         private readonly Mock<IReceiptService> _receiptServiceMock;
         private readonly Mock<IBlobService> _blobServiceMock;
         private readonly Mock<IOCRService> _ocrServiceMock;
-        private readonly Mock<ServiceBusSender> _queueSenderMock;
+        private readonly AnalysisSender _analysisSender;
+        private readonly Mock<IAnalysisQueue> _analysisQueueMock;
 
         private readonly ReceiptProcessingService _service;
 
@@ -26,14 +35,20 @@ namespace OCR_AI_Grocery_Tests
             _receiptServiceMock = new Mock<IReceiptService>();
             _blobServiceMock = new Mock<IBlobService>();
             _ocrServiceMock = new Mock<IOCRService>();
-            _queueSenderMock = new Mock<ServiceBusSender>();
+
+            // Create a mock of ServiceBusSender to pass to AnalysisSender
+            var serviceBusSenderMock = new Mock<ServiceBusSender>();
+            _analysisSender = new AnalysisSender(serviceBusSenderMock.Object);
+
+            _analysisQueueMock = new Mock<IAnalysisQueue>();
 
             _service = new ReceiptProcessingService(
                 _loggerMock.Object,
                 _receiptServiceMock.Object,
                 _blobServiceMock.Object,
                 _ocrServiceMock.Object,
-                _queueSenderMock.Object
+                _analysisSender,
+                _analysisQueueMock.Object
             );
         }
 
@@ -63,8 +78,8 @@ namespace OCR_AI_Grocery_Tests
                 .Setup(x => x.SaveReceiptAsync(It.IsAny<ReceiptDocument>()))
                 .Returns(Task.CompletedTask);
 
-            _queueSenderMock
-                .Setup(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), default))
+            _analysisQueueMock
+                .Setup(x => x.SendToAnalysisQueue(It.IsAny<IDictionary<string, string>>(), It.IsAny<string>()))
                 .Returns(Task.CompletedTask);
 
             // Act
@@ -79,7 +94,7 @@ namespace OCR_AI_Grocery_Tests
                 r.ReceiptText == "Sample OCR Text" &&
                 r.BlobUrl == eventGridEvent.Data.Url
             )), Times.Once);
-            _queueSenderMock.Verify(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), default), Times.Once);
+            _analysisQueueMock.Verify(x => x.SendToAnalysisQueue(It.IsAny<IDictionary<string, string>>(), It.IsAny<string>()), Times.Once);
         }
 
         [Fact]
@@ -95,7 +110,7 @@ namespace OCR_AI_Grocery_Tests
             _blobServiceMock.Verify(x => x.DownloadBlobWithMetadataAsync(It.IsAny<string>()), Times.Never);
             _ocrServiceMock.Verify(x => x.PerformOCR(It.IsAny<Stream>()), Times.Never);
             _receiptServiceMock.Verify(x => x.SaveReceiptAsync(It.IsAny<ReceiptDocument>()), Times.Never);
-            _queueSenderMock.Verify(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), default), Times.Never);
+            _analysisQueueMock.Verify(x => x.SendToAnalysisQueue(It.IsAny<IDictionary<string, string>>(), It.IsAny<string>()), Times.Never);
         }
 
         [Fact]
@@ -113,7 +128,7 @@ namespace OCR_AI_Grocery_Tests
             _blobServiceMock.Verify(x => x.DownloadBlobWithMetadataAsync(It.IsAny<string>()), Times.Never);
             _ocrServiceMock.Verify(x => x.PerformOCR(It.IsAny<Stream>()), Times.Never);
             _receiptServiceMock.Verify(x => x.SaveReceiptAsync(It.IsAny<ReceiptDocument>()), Times.Never);
-            _queueSenderMock.Verify(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), default), Times.Never);
+            _analysisQueueMock.Verify(x => x.SendToAnalysisQueue(It.IsAny<IDictionary<string, string>>(), It.IsAny<string>()), Times.Never);
         }
 
         [Fact]
@@ -133,7 +148,7 @@ namespace OCR_AI_Grocery_Tests
             // Assert
             _ocrServiceMock.Verify(x => x.PerformOCR(It.IsAny<Stream>()), Times.Never);
             _receiptServiceMock.Verify(x => x.SaveReceiptAsync(It.IsAny<ReceiptDocument>()), Times.Never);
-            _queueSenderMock.Verify(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), default), Times.Never);
+            _analysisQueueMock.Verify(x => x.SendToAnalysisQueue(It.IsAny<IDictionary<string, string>>(), It.IsAny<string>()), Times.Never);
         }
 
         [Fact]
@@ -173,8 +188,8 @@ namespace OCR_AI_Grocery_Tests
                 .Setup(x => x.SaveReceiptAsync(It.IsAny<ReceiptDocument>()))
                 .Returns(Task.CompletedTask);
 
-            _queueSenderMock
-                .Setup(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), default))
+            _analysisQueueMock
+                .Setup(x => x.SendToAnalysisQueue(It.IsAny<IDictionary<string, string>>(), It.IsAny<string>()))
                 .Returns(Task.CompletedTask);
 
             // Act
@@ -219,8 +234,8 @@ namespace OCR_AI_Grocery_Tests
                 .Setup(x => x.SaveReceiptAsync(It.IsAny<ReceiptDocument>()))
                 .Returns(Task.CompletedTask);
 
-            _queueSenderMock
-                .Setup(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), default))
+            _analysisQueueMock
+                .Setup(x => x.SendToAnalysisQueue(It.IsAny<IDictionary<string, string>>(), It.IsAny<string>()))
                 .Returns(Task.CompletedTask);
 
             // Act
@@ -230,7 +245,7 @@ namespace OCR_AI_Grocery_Tests
             _blobServiceMock.Verify(x => x.DownloadBlobWithMetadataAsync(It.IsAny<string>()), Times.Exactly(2));
             _ocrServiceMock.Verify(x => x.PerformOCR(It.IsAny<Stream>()), Times.Exactly(2));
             _receiptServiceMock.Verify(x => x.SaveReceiptAsync(It.IsAny<ReceiptDocument>()), Times.Exactly(2));
-            _queueSenderMock.Verify(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), default), Times.Exactly(2));
+            _analysisQueueMock.Verify(x => x.SendToAnalysisQueue(It.IsAny<IDictionary<string, string>>(), It.IsAny<string>()), Times.Exactly(2));
         }
 
         private EventGridEvent CreateSampleEventGridEvent()
@@ -264,5 +279,4 @@ namespace OCR_AI_Grocery_Tests
             };
         }
     }
-
 }
