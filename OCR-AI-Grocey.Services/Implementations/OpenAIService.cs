@@ -30,7 +30,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             var allReceiptsText = string.Join("\n\n", receipts.Select(r => r.ReceiptText));
             var prompt = GenerateOpenAIPrompt(allReceiptsText);
 
-            trygpt
+            try 
 
             {
                 var openAiKey = Environment.GetEnvironmentVariable("OpenAI_API_Key")
