@@ -30,7 +30,8 @@ namespace OCR_AI_Grocey.Services.Implementations
             var allReceiptsText = string.Join("\n\n", receipts.Select(r => r.ReceiptText));
             var prompt = GenerateOpenAIPrompt(allReceiptsText);
 
-            try
+            trygpt
+
             {
                 var openAiKey = Environment.GetEnvironmentVariable("OpenAI_API_Key")
                     ?? throw new InvalidOperationException("OpenAI API Key not found");
@@ -94,41 +95,43 @@ namespace OCR_AI_Grocey.Services.Implementations
         }
 
         private string GenerateOpenAIPrompt(string receiptsText) =>
-            $@"Analyze these receipts and create a structured shopping list. Follow these rules exactly:
+    $@"Analyze these receipts and create a structured shopping list. Follow these rules exactly:
 
-            1. Format store names:
-               - Replace apostrophes with 's'
-               - Remove special characters
-               - Example: 'Sam's Club' → 'Sams Club'
+    1. Format store names:
+       - Replace apostrophes with 's'
+       - Remove special characters
+       - Example: 'Sam's Club' → 'Sams Club'
+       - Combine stores with different locations into a single entry (e.g., 'Walmart Supercenter (Downtown)' and 'Walmart Supercenter (Uptown)' should both be 'Walmart Supercenter').
 
-            2. Format item names:
-               - Expand abbreviations
-               - Use common names
-               - Include brand names when available
-               - Examples:
-                 'CASCPLATPLUS' → 'Cascade Platinum Plus Dishwasher Detergent'
-                 'OJ' → 'Orange Juice'
+    2. Format item names:
+       - Expand abbreviations
+       - Use common names
+       - Include brand names when available
+       - Examples:
+         'CASCPLATPLUS' → 'Cascade Platinum Plus Dishwasher Detergent'
+         'OJ' → 'Orange Juice'
 
-            3. Return ONLY valid JSON in this exact format:
-            {{
-                ""StoreName"": [
-                    ""Item1"",
-                    ""Item2""
-                ]
-            }}
+    3. Return ONLY valid JSON in this exact format:
+    {{
+        ""StoreName"": [
+            ""Item1"",
+            ""Item2""
+        ]
+    }}
 
-            Do not include:
-            - Prices
-            - Quantities
-            - Extra text or explanations
-            - Markdown formatting
+    4. Do NOT include:
+       - Prices
+       - Quantities
+       - Extra text or explanations
+       - Markdown formatting
 
-            Receipts to analyze:
-            {receiptsText}";
+    Receipts to analyze:
+    {receiptsText}";
+
 
         private object CreateOpenAIRequest(string prompt) => new
         {
-            model = "gpt-4",
+            model = "gpt-4-turbo",
             messages = new[]
             {
                 new
