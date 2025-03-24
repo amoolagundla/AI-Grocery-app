@@ -94,44 +94,49 @@ namespace OCR_AI_Grocey.Services.Implementations
             }
         }
 
-        private string GenerateOpenAIPrompt(string receiptsText) =>
-    $@"Analyze these receipts and create a structured shopping list. Follow these rules exactly:
+        private string GenerateOpenAIPrompt(string receiptsText) => $@"
+                        You are an expert in data normalization and product categorization. Analyze the following receipts and return a structured shopping list grouped by store. Follow these rules strictly:
 
-    1. Format store names:
-       - Replace apostrophes with 's'
-       - Remove special characters
-       - Example: 'Sam's Club' → 'Sams Club'
-       - Combine stores with different locations into a single entry (e.g., 'Walmart Supercenter (Downtown)' and 'Walmart Supercenter (Uptown)' should both be 'Walmart Supercenter').
+                        1. **Normalize store names**:
+                           - Group stores with different locations or naming formats under a single standard name.
+                           - Remove location details, store numbers, and suffixes like city names or branches.
+                           - Normalize variations (e.g., abbreviations, spelling differences, extra descriptors).
+                           - Use clean, consistent capitalization.
 
-    2. Format item names:
-       - Expand abbreviations
-       - Use common names
-       - Include brand names when available
-       - Examples:
-         'CASCPLATPLUS' → 'Cascade Platinum Plus Dishwasher Detergent'
-         'OJ' → 'Orange Juice'
+                        2. **Clean item names**:
+                           - Expand abbreviations.
+                           - Use commonly recognized product names.
+                           - Keep brand names when helpful (e.g., 'Cascade', 'Dove', 'Zyrtec').
 
-    3. Return ONLY valid JSON in this exact format:
-    {{
-        ""StoreName"": [
-            ""Item1"",
-            ""Item2""
-        ]
-    }}
+                        3. **Output MUST be valid JSON in the following format**:
+                        {{
+                          ""Normalized Store Name"": [
+                            ""Clean Item Name 1"",
+                            ""Clean Item Name 2""
+                          ],
+                          ""Another Normalized Store"": [
+                            ""Item A"",
+                            ""Item B""
+                          ]
+                        }}
 
-    4. Do NOT include:
-       - Prices
-       - Quantities
-       - Extra text or explanations
-       - Markdown formatting
+                        4. **Do NOT include**:
+                           - Prices
+                           - Quantities
+                           - Markdown, HTML, or explanations
+                           - Extra text before or after the JSON
 
-    Receipts to analyze:
-    {receiptsText}";
+                        Purpose: This will power a shopping insights tool that tracks what users buy and from where.
+
+                        Receipts to analyze:
+                        {receiptsText}";
+
+
 
 
         private object CreateOpenAIRequest(string prompt) => new
         {
-            model = "gpt-4-turbo",
+            model = "gpt-4o-mini",
             messages = new[]
             {
                 new
