@@ -147,13 +147,11 @@ namespace OCR_AI_Grocey.Services.Implementations
                                               ]
                                             }}
 
-                                            4. Do NOT include:
-                                               - Prices
-                                               - Quantities
+                                            4. Do NOT include: 
                                                - Markdown, HTML, or explanations
                                                - Any extra text before or after the JSON
 
-                                            Purpose: This will power a shopping insights tool that tracks what users buy and from where.
+                                            Purpose: This will power a shopping insights tool that tracks what users buy and from where. 
 
                                             Receipts to analyze:
                                             {receiptsText}";

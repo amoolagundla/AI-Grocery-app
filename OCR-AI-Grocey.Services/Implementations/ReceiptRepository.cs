@@ -85,8 +85,8 @@ namespace OCR_AI_Grocey.Services.Implementations
                 string pkPropertyName = _partitionKeyPath.TrimStart('/');
 
                 var query = new QueryDefinition(
-                    $"SELECT top 1 * FROM c WHERE c.{pkPropertyName} = @familyId  ")
-                    .WithParameter("@familyId", familyId);
+                     $"SELECT * FROM c WHERE c.{pkPropertyName} = @familyId AND (c.Processed = false OR NOT IS_DEFINED(c.Processed))")
+                     .WithParameter("@familyId", familyId);
 
                 _logger.LogInformation($"Querying with: {query.QueryText}");
 
