@@ -15,5 +15,7 @@ namespace OCR_AI_Grocey.Services.Interfaces
         Task<ShoppingList> GetExistingShoppingList(string familyId);
         Task<Dictionary<string, List<string>>> AnalyzeReceiptsWithOpenAI(List<ReceiptDocument> receipts);
         Task<List<ReceiptDocument>> FetchUnprocessedReceipts(string familyId);
+        Task<Dictionary<string, List<string>>> AnalyzeReceiptWithOpenAI(string receiptId);
+        Task UpdateShoppingLists(ReceiptAnalysisMessage receiptAnalysis);
     }
 }

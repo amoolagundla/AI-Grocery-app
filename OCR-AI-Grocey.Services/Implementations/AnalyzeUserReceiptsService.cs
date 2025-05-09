@@ -38,22 +38,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             {
                 var receiptAnalysis = ValidateAndExtractMessage(message)
                     .ThrowIfMissingFamilyId();
-
-                var unprocessedReceipts = await FetchUnprocessedReceiptsForFamily(receiptAnalysis.FamilyId);
-
-                if (!unprocessedReceipts.HasReceipts())
-                {
-                    _logger.LogInformation($"No new receipts for UserEmail {receiptAnalysis.UserEmail}");
-                    return;
-                }
-
-                var shoppingListUpdate = await CreateShoppingListUpdate(unprocessedReceipts, receiptAnalysis.FamilyId);
-
-                await Task.WhenAll(
-                    UpdateShoppingList(shoppingListUpdate),
-                    UpdateReceiptRecords(unprocessedReceipts, shoppingListUpdate),
-                    NotifyUser(receiptAnalysis, shoppingListUpdate)
-                );
+                await UpdateShoppingLists(receiptAnalysis);
 
                 _logger.LogInformation($"Successfully processed receipts for UserEmail {receiptAnalysis.UserEmail}");
             }
@@ -62,6 +47,25 @@ namespace OCR_AI_Grocey.Services.Implementations
                 _logger.LogError(ex, "Receipt analysis failed");
                 throw;
             }
+        }
+
+        public async Task UpdateShoppingLists(ReceiptAnalysisMessage receiptAnalysis)
+        {
+            var unprocessedReceipts = await FetchUnprocessedReceiptsForFamily(receiptAnalysis.FamilyId);
+
+            if (!unprocessedReceipts.HasReceipts())
+            {
+                _logger.LogInformation($"No new receipts for UserEmail {receiptAnalysis.UserEmail}");
+                return;
+            }
+
+            var shoppingListUpdate = await CreateShoppingListUpdate(unprocessedReceipts, receiptAnalysis.FamilyId);
+
+            await Task.WhenAll(
+                UpdateShoppingList(shoppingListUpdate),
+                UpdateReceiptRecords(unprocessedReceipts, shoppingListUpdate),
+                NotifyUser(receiptAnalysis, shoppingListUpdate)
+            );
         }
 
         private ReceiptAnalysisMessage ValidateAndExtractMessage(ServiceBusReceivedMessage message)
@@ -88,6 +92,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             List<ReceiptDocument> receipts,
             string familyId)
         {
+            var shoppinglists= await _shoppingListRepository.GetExistingShoppingList(familyId);
             var analyzedItems = await _openAIService.AnalyzeReceiptsWithOpenAI(receipts);
             if (analyzedItems == null || !analyzedItems.Any())
             {
@@ -176,6 +181,21 @@ namespace OCR_AI_Grocey.Services.Implementations
         public Task<Dictionary<string, List<string>>> AnalyzeReceiptsWithOpenAI(List<ReceiptDocument> receipts)
         {
             throw new NotImplementedException();
+        }
+
+        public async Task<Dictionary<string, List<string>>> AnalyzeReceiptWithOpenAI(string receiptId)
+        {
+            try
+            {
+                var receipt= await _receiptRepository.FetchRecipet(receiptId);
+                var combinedText = string.Join("", receipt.FirstOrDefault().ReceiptText);
+                return await _openAIService.AnalyzeReceiptWithOpenAIAsync(combinedText);
+
+            }
+            catch (Exception ex)
+            {
+                return new Dictionary<string, List<string>>();
+            }
         }
 
         public Task<List<ReceiptDocument>> FetchUnprocessedReceipts(string familyId)

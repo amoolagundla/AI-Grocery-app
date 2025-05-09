@@ -24,13 +24,40 @@ namespace OCR_AI_Grocey.Services.Implementations
             _logger = loggerFactory.CreateLogger<OpenAIService>();
             _cleanJsonResponseHelper = cleanJsonResponseHelper;
         }
+        public async Task<Dictionary<string, List<string>>> AnalyzeReceiptWithOpenAIAsync(string receipt)
+        {
+            var allReceiptsText = string.Join("\n\n", receipt);
+            var prompt = GenerateOpenAIPrompt(allReceiptsText);
+
+            try
+
+            {
+                var openAiKey = Environment.GetEnvironmentVariable("OpenAI_API_Key")
+                    ?? throw new InvalidOperationException("OpenAI API Key not found");
+
+                var requestBody = CreateOpenAIRequest(prompt);
+                _httpClient.DefaultRequestHeaders.Authorization =
+                    new AuthenticationHeaderValue("Bearer", openAiKey);
+
+                var response = await _httpClient.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", requestBody);
+                response.EnsureSuccessStatusCode();
+
+                var responseString = await response.Content.ReadAsStringAsync();
+                return ParseOpenAIResponse(responseString);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error analyzing receipts with OpenAI: {ex.Message}");
+                throw;
+            }
+        }
 
         public async Task<Dictionary<string, List<string>>> AnalyzeReceiptsWithOpenAI(List<ReceiptDocument> receipts)
         {
             var allReceiptsText = string.Join("\n\n", receipts.Select(r => r.ReceiptText));
             var prompt = GenerateOpenAIPrompt(allReceiptsText);
 
-            try 
+            try
 
             {
                 var openAiKey = Environment.GetEnvironmentVariable("OpenAI_API_Key")
@@ -95,41 +122,42 @@ namespace OCR_AI_Grocey.Services.Implementations
         }
 
         private string GenerateOpenAIPrompt(string receiptsText) => $@"
-                        You are an expert in data normalization and product categorization. Analyze the following receipts and return a structured shopping list grouped by store. Follow these rules strictly:
+                                            You are an expert in data normalization and product categorization. Analyze the following receipts and return a structured shopping list grouped by store. Follow these rules strictly:
 
-                        1. **Normalize store names**:
-                           - Group stores with different locations or naming formats under a single standard name.
-                           - Remove location details, store numbers, and suffixes like city names or branches.
-                           - Normalize variations (e.g., abbreviations, spelling differences, extra descriptors).
-                           - Use clean, consistent capitalization.
+                                            1. Normalize store names:
+                                               - Group stores with different locations or naming formats under a single, standard store name.
+                                               - Remove location details, city names, branches, store numbers, and suffixes.
+                                               - Normalize variations (e.g., abbreviations, extra descriptors, casing inconsistencies).
+                                               - Use short, clean, and consistent capitalization (e.g., 'Costco McKinney' and 'COSTCO Plano #123' → 'Costco').
 
-                        2. **Clean item names**:
-                           - Expand abbreviations.
-                           - Use commonly recognized product names.
-                           - Keep brand names when helpful (e.g., 'Cascade', 'Dove', 'Zyrtec').
+                                            2. Clean item names:
+                                               - Expand abbreviations and clarify vague terms.
+                                               - Use commonly recognized product names.
+                                               - Keep brand names when helpful (e.g., 'Cascade', 'Dove', 'Zyrtec').
 
-                        3. **Output MUST be valid JSON in the following format**:
-                        {{
-                          ""Normalized Store Name"": [
-                            ""Clean Item Name 1"",
-                            ""Clean Item Name 2""
-                          ],
-                          ""Another Normalized Store"": [
-                            ""Item A"",
-                            ""Item B""
-                          ]
-                        }}
+                                            3. Output MUST be valid JSON in the following format:
+                                            {{
+                                              ""Normalized Store Name"": [
+                                                ""Clean Item Name 1"",
+                                                ""Clean Item Name 2""
+                                              ],
+                                              ""Another Normalized Store"": [
+                                                ""Item A"",
+                                                ""Item B""
+                                              ]
+                                            }}
 
-                        4. **Do NOT include**:
-                           - Prices
-                           - Quantities
-                           - Markdown, HTML, or explanations
-                           - Extra text before or after the JSON
+                                            4. Do NOT include:
+                                               - Prices
+                                               - Quantities
+                                               - Markdown, HTML, or explanations
+                                               - Any extra text before or after the JSON
 
-                        Purpose: This will power a shopping insights tool that tracks what users buy and from where.
+                                            Purpose: This will power a shopping insights tool that tracks what users buy and from where.
 
-                        Receipts to analyze:
-                        {receiptsText}";
+                                            Receipts to analyze:
+                                            {receiptsText}";
+
 
 
 

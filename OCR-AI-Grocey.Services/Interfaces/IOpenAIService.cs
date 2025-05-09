@@ -11,5 +11,6 @@ namespace OCR_AI_Grocey.Services.Interfaces
     {
         Task<Dictionary<string, List<string>>> AnalyzeReceiptsWithOpenAI(List<ReceiptDocument> receipts);
         Task<string> NormalizeStoreName(string receiptText);
+        Task<Dictionary<string, List<string>>> AnalyzeReceiptWithOpenAIAsync(string receipt);
     }
 }

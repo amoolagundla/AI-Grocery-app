@@ -38,6 +38,44 @@ namespace OCR_AI_Grocey.Services.Implementations
                 _logger.LogInformation($"Using default partition key path: {_partitionKeyPath}");
             }
         }
+        public async Task<List<ReceiptDocument>> FetchRecipet(string receiptId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(receiptId))
+                    throw new ArgumentException("Receipt ID cannot be null or empty", nameof(receiptId));
+
+                var query = new QueryDefinition(
+                  "SELECT * FROM c WHERE c.UserId = @userEmail")
+                  .WithParameter("@userEmail", receiptId);
+
+                _logger.LogInformation("Querying Cosmos DB for receiptId: {ReceiptId}", receiptId);
+
+                var receipts = new List<ReceiptDocument>();
+                using FeedIterator<ReceiptDocument> queryIterator = _receiptsContainer.GetItemQueryIterator<ReceiptDocument>(query);
+
+                while (queryIterator.HasMoreResults)
+                {
+                    FeedResponse<ReceiptDocument> response = await queryIterator.ReadNextAsync();
+                    receipts.AddRange(response);
+                }
+
+                _logger.LogInformation("Found {Count} receipts with id {ReceiptId}", receipts.Count, receiptId);
+                return receipts;
+            }
+            catch (CosmosException ex)
+            {
+                _logger.LogError(ex, "Cosmos DB error fetching receipt with id {ReceiptId}: {StatusCode}", receiptId, ex.StatusCode);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error fetching receipt with id {ReceiptId}", receiptId);
+                throw;
+            }
+        }
+
+        
 
         public async Task<List<ReceiptDocument>> FetchUnprocessedReceipts(string familyId)
         {
@@ -47,7 +85,7 @@ namespace OCR_AI_Grocey.Services.Implementations
                 string pkPropertyName = _partitionKeyPath.TrimStart('/');
 
                 var query = new QueryDefinition(
-                    $"SELECT * FROM c WHERE c.{pkPropertyName} = @familyId AND (c.Processed = false OR NOT IS_DEFINED(c.Processed))")
+                    $"SELECT top 1 * FROM c WHERE c.{pkPropertyName} = @familyId  ")
                     .WithParameter("@familyId", familyId);
 
                 _logger.LogInformation($"Querying with: {query.QueryText}");
@@ -70,6 +108,8 @@ namespace OCR_AI_Grocey.Services.Implementations
                 throw;
             }
         }
+
+        
 
         public async Task UpdateReceipt(ReceiptDocument receipt)
         {
