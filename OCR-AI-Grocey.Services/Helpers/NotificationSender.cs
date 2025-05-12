@@ -42,4 +42,19 @@ namespace OCR_AI_Grocey.Services.Helpers
             return _sender.SendMessageAsync(message, cancellationToken);
         }
     }
+
+    public class AIMLSender
+    {
+        private readonly ServiceBusSender _sender;
+
+        public AIMLSender(ServiceBusSender sender)
+        {
+            _sender = sender;
+        }
+
+        public Task SendMessageAsync(ServiceBusMessage message, CancellationToken cancellationToken = default)
+        {
+            return _sender.SendMessageAsync(message, cancellationToken);
+        }
+    }
 }

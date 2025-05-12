@@ -18,7 +18,7 @@ namespace OCR_AI_Grocey.Services.Implementations
         private readonly IOpenAIService _openAIService;
         private readonly INotificationService _notificationService;
         private readonly ILogger<AnalyzeUserReceiptsService> _logger;
-        private readonly IAnalysisQueue analysisQueue;
+        private readonly IAIMLInterface analysisQueue;
 
         public AnalyzeUserReceiptsService(
             IReceiptRepository receiptRepository,
@@ -26,7 +26,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             IOpenAIService openAIService,
             INotificationService notificationService,
             ILoggerFactory loggerFactory,
-            IAnalysisQueue analysisQueue)
+            IAIMLInterface analysisQueue)
         {
             _receiptRepository = receiptRepository;
             _shoppingListRepository = shoppingListRepository;
@@ -63,21 +63,19 @@ namespace OCR_AI_Grocey.Services.Implementations
                 return;
             }
 
-            var shoppingListUpdate = await CreateShoppingListUpdate(unprocessedReceipts, receiptAnalysis.FamilyId);
+            var shoppingListUpdate = await CreateShoppingListUpdate(unprocessedReceipts, receiptAnalysis.FamilyId,receiptAnalysis.UserEmail);
 
             await Task.WhenAll(
                 UpdateShoppingList(shoppingListUpdate),
                 UpdateReceiptRecords(unprocessedReceipts, shoppingListUpdate),
-                NotifyUser(receiptAnalysis, shoppingListUpdate) 
-               // NotifyAIML(shoppingListUpdate.TimeSeriesData, receiptAnalysis.UserEmail)
+                NotifyUser(receiptAnalysis, shoppingListUpdate), 
+                NotifyAIML(shoppingListUpdate.TimeSeriesData, receiptAnalysis.UserEmail)
             );
         }
 
         private async Task NotifyAIML(string timeSeriesData, string userEmail)
-        {
-            var dict= new Dictionary<string, string>();
-            dict.Add("email", userEmail); 
-            await analysisQueue.SendToAnalysisQueue(dict, JsonConvert.SerializeObject(timeSeriesData), "TimeGenAIML");
+        { 
+            await analysisQueue.SendNotification(JsonConvert.SerializeObject(timeSeriesData));
         }
 
         private ReceiptAnalysisMessage ValidateAndExtractMessage(ServiceBusReceivedMessage message)
@@ -102,13 +100,21 @@ namespace OCR_AI_Grocey.Services.Implementations
 
         private async Task<ShoppingListUpdate> CreateShoppingListUpdate(
             List<ReceiptDocument> receipts,
-            string familyId)
+            string familyId,
+            string userEmail)
         {
             var shoppinglists= await _shoppingListRepository.GetExistingShoppingList(familyId);
             var items = await _openAIService.AnalyzeReceiptsWithOpenAI(receipts);
             var analyzedItems = items.Item1;
             var timeseriesData=items.Item2;
-
+            // ✅ Inject UserEmail into every data point
+            foreach (var dailyPoints in timeseriesData.Values)
+            {
+                foreach (var point in dailyPoints)
+                {
+                    point.UserEmail = userEmail;
+                }
+            }
             if (analyzedItems == null || !analyzedItems.Any())
             {
                 throw new InvalidOperationException("No items extracted from receipts");

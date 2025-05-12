@@ -10,7 +10,7 @@ namespace OCR_AI_Grocey.Services.Helpers
         /// <summary>
         /// Converts the original store data format to a time series format suitable for ML algorithms
         /// </summary>
-        public static Dictionary<string, List<TimeSeriesDataPoint>> ConvertToTimeSeriesFormat(string jsonContent)
+        public static Dictionary<string, List<TimeSeriesDataPoint>> ConvertToTimeSeriesFormat(string jsonContent,string userEmail)
         {
             // Parse the original JSON
             var originalData = JsonConvert.DeserializeObject<StoreDataWrapper>(jsonContent);
@@ -44,6 +44,7 @@ namespace OCR_AI_Grocey.Services.Helpers
                             Item = storeData.Items[i],
                             Price = storeData.Prices[i],
                             TransactionId = storeData.TransactionId,
+                            UserEmail= userEmail,
                             ItemCategory = CategorizeItem(storeData.Items[i]),
                             DayOfWeek = (int)date.DayOfWeek,
                             Month = date.Month,
@@ -137,6 +138,9 @@ namespace OCR_AI_Grocey.Services.Helpers
 
         [JsonProperty("transaction_id")]
         public string? TransactionId { get; set; }
+
+        [JsonProperty("user_email")]
+        public string? UserEmail { get; set; }
     }
 
     /// <summary>
@@ -163,5 +167,6 @@ namespace OCR_AI_Grocey.Services.Helpers
 
         // Additional fields that could be added if data available
         public int? Quantity { get; set; }      // Optional quantity if available
+        public string UserEmail { get; set; }
     }
 }

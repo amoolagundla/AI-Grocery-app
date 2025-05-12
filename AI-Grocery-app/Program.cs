@@ -59,7 +59,12 @@ var host = new HostBuilder()
         {
             throw new InvalidOperationException("NotificaitonQueueConnectionString configuration is missing");
         }
-
+        var aiMLConnectionString = Environment.GetEnvironmentVariable("AiMLConnectionString");
+        if (string.IsNullOrEmpty(notificationQueueConnectionString))
+        {
+            throw new InvalidOperationException("AiMLConnectionString configuration is missing");
+        }
+        
         var receiptQueueConnectionString = Environment.GetEnvironmentVariable("QueueConnectionString");
         if (string.IsNullOrEmpty(receiptQueueConnectionString))
         {
@@ -74,10 +79,14 @@ var host = new HostBuilder()
         services.AddSingleton<AnalysisSender>(new AnalysisSender(
             new ServiceBusClient(receiptQueueConnectionString).CreateSender("receipt-analysis-queue")
         ));
-
         services.AddSingleton<NotificationSender>(new NotificationSender(
-            new ServiceBusClient(notificationQueueConnectionString).CreateSender("user-notifications-queue")
+           new ServiceBusClient(notificationQueueConnectionString).CreateSender("user-notifications-queue")
+       ));
+        services.AddSingleton<AIMLSender>(new AIMLSender(
+            new ServiceBusClient(aiMLConnectionString).CreateSender("ai-ml-queue")
         ));
+
+         
 
         // Add service registrations that depend on these senders
         services.AddScoped<IReceiptProcessingService, ReceiptProcessingService>();
@@ -89,6 +98,7 @@ var host = new HostBuilder()
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IBlobService, BlobService>();
         services.AddScoped<IOCRService, OCRService>();
+        services.AddScoped<IAIMLInterface, AIMLInterface>(); 
         services.AddScoped<IReceiptProcessingService, ReceiptProcessingService>();
         services.AddScoped<IReceiptRepository, ReceiptRepository>();
         services.AddScoped<IShoppingListRepository, ShoppingListRepository>();

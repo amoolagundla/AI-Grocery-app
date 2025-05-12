@@ -208,7 +208,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             max_tokens = 1000
         };
 
-        public (Dictionary<string, List<string>>, Dictionary<DateTime, List<TimeSeriesDataPoint>>) ParseOpenAIResponse(string responseString)
+        public (Dictionary<string, List<string>>, Dictionary<DateTime, List<TimeSeriesDataPoint>>) ParseOpenAIResponse(string responseString )
         {
             try
             {
@@ -235,8 +235,7 @@ namespace OCR_AI_Grocey.Services.Implementations
                 foreach (var kvp in originalFormat)
                 {
                     stringItemFormat[kvp.Key] = kvp.Value.Items ?? new List<string>();
-                }
-
+                } 
                 // Group time series data by date
                 var groupedByDate = timeSeriesFormat
                     .SelectMany(kvp => kvp.Value)
