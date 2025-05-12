@@ -31,5 +31,8 @@ namespace OCR_AI_Grocery.Models.Receipt
         public DateTime PurchasedDate { get;  set; }
 
         public bool Processed { get; set; } = false;
+
+        [JsonProperty("TimeSeriesData")]
+        public string TimeSeriesData { get; set; }
     }
 }

@@ -6,6 +6,7 @@ using OCR_AI_Grocery.Models.Receipt;
 using OCR_AI_Grocey.Services.Helpers;
 using OCR_AI_Grocey.Services.Interfaces;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 
 namespace OCR_AI_Grocey.Services.Implementations
@@ -17,19 +18,22 @@ namespace OCR_AI_Grocey.Services.Implementations
         private readonly IOpenAIService _openAIService;
         private readonly INotificationService _notificationService;
         private readonly ILogger<AnalyzeUserReceiptsService> _logger;
+        private readonly IAnalysisQueue analysisQueue;
 
         public AnalyzeUserReceiptsService(
             IReceiptRepository receiptRepository,
             IShoppingListRepository shoppingListRepository,
             IOpenAIService openAIService,
             INotificationService notificationService,
-            ILoggerFactory loggerFactory)
+            ILoggerFactory loggerFactory,
+            IAnalysisQueue analysisQueue)
         {
             _receiptRepository = receiptRepository;
             _shoppingListRepository = shoppingListRepository;
             _openAIService = openAIService;
             _notificationService = notificationService;
             _logger = loggerFactory.CreateLogger<AnalyzeUserReceiptsService>();
+            this.analysisQueue = analysisQueue;
         }
 
         public async Task ProcessReceiptAnalysis(ServiceBusReceivedMessage message)
@@ -64,8 +68,16 @@ namespace OCR_AI_Grocey.Services.Implementations
             await Task.WhenAll(
                 UpdateShoppingList(shoppingListUpdate),
                 UpdateReceiptRecords(unprocessedReceipts, shoppingListUpdate),
-                NotifyUser(receiptAnalysis, shoppingListUpdate)
+                NotifyUser(receiptAnalysis, shoppingListUpdate) 
+               // NotifyAIML(shoppingListUpdate.TimeSeriesData, receiptAnalysis.UserEmail)
             );
+        }
+
+        private async Task NotifyAIML(string timeSeriesData, string userEmail)
+        {
+            var dict= new Dictionary<string, string>();
+            dict.Add("email", userEmail); 
+            await analysisQueue.SendToAnalysisQueue(dict, JsonConvert.SerializeObject(timeSeriesData), "TimeGenAIML");
         }
 
         private ReceiptAnalysisMessage ValidateAndExtractMessage(ServiceBusReceivedMessage message)
@@ -93,7 +105,10 @@ namespace OCR_AI_Grocey.Services.Implementations
             string familyId)
         {
             var shoppinglists= await _shoppingListRepository.GetExistingShoppingList(familyId);
-            var analyzedItems = await _openAIService.AnalyzeReceiptsWithOpenAI(receipts);
+            var items = await _openAIService.AnalyzeReceiptsWithOpenAI(receipts);
+            var analyzedItems = items.Item1;
+            var timeseriesData=items.Item2;
+
             if (analyzedItems == null || !analyzedItems.Any())
             {
                 throw new InvalidOperationException("No items extracted from receipts");
@@ -106,7 +121,8 @@ namespace OCR_AI_Grocey.Services.Implementations
                 ExistingList = existingList,
                 NewItems = analyzedItems,
                 StoreName = analyzedItems.Keys.FirstOrDefault() ?? "Unknown Store",
-                MergedList = MergeShoppingLists(existingList, analyzedItems)
+                MergedList = MergeShoppingLists(existingList, analyzedItems),
+                TimeSeriesData= JsonConvert.SerializeObject(timeseriesData)
             };
         }
 
@@ -126,6 +142,7 @@ namespace OCR_AI_Grocey.Services.Implementations
                 receipt.UploadDate = DateTime.UtcNow;
                 receipt.StoreItems = update.NewItems;
                 receipt.StoreName = update.StoreName;
+                receipt.TimeSeriesData= update.TimeSeriesData;
                 await _receiptRepository.UpdateReceipt(receipt);
             }
         }

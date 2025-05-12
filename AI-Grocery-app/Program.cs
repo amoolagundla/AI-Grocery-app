@@ -97,7 +97,9 @@ var host = new HostBuilder()
         services.AddSingleton<IFamilyRepository, FamilyRepository>();
         services.AddSingleton<IAnalysisQueue, AnalysisQueue>();
         services.AddScoped<IAnalyzeUserReceiptsService, AnalyzeUserReceiptsService>();   
-        services.AddSingleton<CleanJsonResponseHelper>();
+        services.AddSingleton<ICleanJsonResponseHelper,CleanJsonResponseHelper>();
+        services.AddSingleton<IJsonResponseParser,JsonResponseParser>();
+        services.AddSingleton<TimeSeriesJsonParser>(); 
         // Register activity functions
         services.AddSingleton<AnalyzeUserReceiptsActivityFunction>(); 
 

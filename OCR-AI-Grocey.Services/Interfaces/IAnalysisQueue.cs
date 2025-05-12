@@ -8,6 +8,6 @@ namespace OCR_AI_Grocey.Services.Interfaces
 {
     public interface IAnalysisQueue
     {
-          Task SendToAnalysisQueue(IDictionary<string, string> metadata, string extractedText);
+          Task SendToAnalysisQueue(IDictionary<string, string> metadata, string extractedText, string subject = "ReceiptAnalysis");
     }
 }

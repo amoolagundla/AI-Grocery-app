@@ -2,6 +2,7 @@
 using Newtonsoft.Json;
 using OCR_AI_Grocery.Models.Receipt;
 using OCR_AI_Grocery.services;
+using OCR_AI_Grocey.Services.Helpers;
 using OCR_AI_Grocey.Services.Interfaces;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -14,15 +15,17 @@ namespace OCR_AI_Grocey.Services.Implementations
         private readonly HttpClient _httpClient;
         private readonly ILogger<OpenAIService> _logger;
         private readonly CleanJsonResponseHelper _cleanJsonResponseHelper;
-
+        private readonly IJsonResponseParser parser;
         public OpenAIService(
             HttpClient httpClient,
             ILoggerFactory loggerFactory,
-            CleanJsonResponseHelper cleanJsonResponseHelper)
+            CleanJsonResponseHelper cleanJsonResponseHelper,
+            IJsonResponseParser parser)
         {
             _httpClient = httpClient;
             _logger = loggerFactory.CreateLogger<OpenAIService>();
             _cleanJsonResponseHelper = cleanJsonResponseHelper;
+            this.parser = parser;
         }
         public async Task<Dictionary<string, List<string>>> AnalyzeReceiptWithOpenAIAsync(string receipt)
         {
@@ -43,7 +46,8 @@ namespace OCR_AI_Grocey.Services.Implementations
                 response.EnsureSuccessStatusCode();
 
                 var responseString = await response.Content.ReadAsStringAsync();
-                return ParseOpenAIResponse(responseString);
+                var items= ParseOpenAIResponse(responseString);
+                return items.Item1;
             }
             catch (Exception ex)
             {
@@ -52,7 +56,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             }
         }
 
-        public async Task<Dictionary<string, List<string>>> AnalyzeReceiptsWithOpenAI(List<ReceiptDocument> receipts)
+        public async Task<(Dictionary<string, List<string>>, Dictionary<DateTime, List<TimeSeriesDataPoint>>)> AnalyzeReceiptsWithOpenAI(List<ReceiptDocument> receipts)
         {
             var allReceiptsText = string.Join("\n\n", receipts.Select(r => r.ReceiptText));
             var prompt = GenerateOpenAIPrompt(allReceiptsText);
@@ -71,7 +75,7 @@ namespace OCR_AI_Grocey.Services.Implementations
                 response.EnsureSuccessStatusCode();
 
                 var responseString = await response.Content.ReadAsStringAsync();
-                return ParseOpenAIResponse(responseString);
+                return ParseOpenAIResponse(responseString); 
             }
             catch (Exception ex)
             {
@@ -122,39 +126,63 @@ namespace OCR_AI_Grocey.Services.Implementations
         }
 
         private string GenerateOpenAIPrompt(string receiptsText) => $@"
-                                            You are an expert in data normalization and product categorization. Analyze the following receipts and return a structured shopping list grouped by store. Follow these rules strictly:
+                                                                    You are an expert in data normalization and product categorization. Analyze the following receipts and return a structured shopping list grouped by store, including pricing data. Follow these rules strictly:
 
-                                            1. Normalize store names:
-                                               - Group stores with different locations or naming formats under a single, standard store name.
-                                               - Remove location details, city names, branches, store numbers, and suffixes.
-                                               - Normalize variations (e.g., abbreviations, extra descriptors, casing inconsistencies).
-                                               - Use short, clean, and consistent capitalization (e.g., 'Costco McKinney' and 'COSTCO Plano #123' → 'Costco').
+                                                                    1. Normalize store names:
+                                                                       - Group stores with different locations or naming formats under a single, standard store name.
+                                                                       - Remove location details, city names, branches, store numbers, and suffixes.
+                                                                       - Normalize variations (e.g., abbreviations, extra descriptors, casing inconsistencies).
+                                                                       - Use short, clean, and consistent capitalization (e.g., 'Costco McKinney' and 'COSTCO Plano #123' → 'Costco').
 
-                                            2. Clean item names:
-                                               - Expand abbreviations and clarify vague terms.
-                                               - Use commonly recognized product names.
-                                               - Keep brand names when helpful (e.g., 'Cascade', 'Dove', 'Zyrtec').
+                                                                    2. Clean item names:
+                                                                       - Expand abbreviations and clarify vague terms.
+                                                                       - Use commonly recognized product names.
+                                                                       - Keep brand names when helpful (e.g., 'Cascade', 'Dove', 'Zyrtec').
 
-                                            3. Output MUST be valid JSON in the following format:
-                                            {{
-                                              ""Normalized Store Name"": [
-                                                ""Clean Item Name 1"",
-                                                ""Clean Item Name 2""
-                                              ],
-                                              ""Another Normalized Store"": [
-                                                ""Item A"",
-                                                ""Item B""
-                                              ]
-                                            }}
+                                                                    3. Extract price information:
+                                                                       - Include the price for each item.
+                                                                       - Convert all prices to numerical format (e.g., '$4.99' → 4.99).
+                                                                       - If the receipt includes quantity, calculate the per-unit price.
+                                                                       - If a price is missing, use null.
 
-                                            4. Do NOT include: 
-                                               - Markdown, HTML, or explanations
-                                               - Any extra text before or after the JSON
+                                                                    4. Output MUST be valid JSON in the following format:
+                                                                    {{
+                                                                      ""stores"": {{
+                                                                        ""Normalized Store Name"": {{
+                                                                          ""items"": [
+                                                                            ""Clean Item Name 1"",
+                                                                            ""Clean Item Name 2""
+                                                                          ],
+                                                                          ""prices"": [
+                                                                            4.99,
+                                                                            12.50
+                                                                          ],
+                                                                          ""purchase_date"": ""YYYY-MM-DD"",
+                                                                          ""transaction_id"": ""receipt identifier if available""
+                                                                        }},
+                                                                        ""Another Normalized Store"": {{
+                                                                          ""items"": [
+                                                                            ""Item A"",
+                                                                            ""Item B""
+                                                                          ],
+                                                                          ""prices"": [
+                                                                            2.99,
+                                                                            8.75
+                                                                          ],
+                                                                          ""purchase_date"": ""YYYY-MM-DD"",
+                                                                          ""transaction_id"": ""receipt identifier if available""
+                                                                        }}
+                                                                      }}
+                                                                    }}
 
-                                            Purpose: This will power a shopping insights tool that tracks what users buy and from where. 
+                                                                    5. Do NOT include: 
+                                                                       - Markdown, HTML, or explanations
+                                                                       - Any extra text before or after the JSON
 
-                                            Receipts to analyze:
-                                            {receiptsText}";
+                                                                    Purpose: This will power a shopping insights tool that tracks what users buy, where they buy it, and price trends over time. The price data will be used by the TimeGen1 ML algorithm to predict future price changes and optimal purchase timing.
+
+                                                                    Receipts to analyze:
+                                                                    {receiptsText}";
 
 
 
@@ -180,7 +208,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             max_tokens = 1000
         };
 
-        private Dictionary<string, List<string>> ParseOpenAIResponse(string responseString)
+        public (Dictionary<string, List<string>>, Dictionary<DateTime, List<TimeSeriesDataPoint>>) ParseOpenAIResponse(string responseString)
         {
             try
             {
@@ -195,18 +223,41 @@ namespace OCR_AI_Grocey.Services.Implementations
 
                 // Clean and parse the JSON response
                 string cleanedJson = CleanJsonResponse(aiGeneratedText);
-                var result = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(cleanedJson);
 
-                return result ?? new Dictionary<string, List<string>>();
+                // Parse original format
+                var originalFormat = parser.ParseOpenAIResponse(cleanedJson); // Dictionary<string, StoreData>
+
+                // Convert to time series format for ML
+                var timeSeriesFormat = parser.ParseOpenAIResponseForTimeSeries(cleanedJson); // Dictionary<string, List<TimeSeriesDataPoint>>
+
+                // Extract flat string dictionary for lightweight clients
+                var stringItemFormat = new Dictionary<string, List<string>>();
+                foreach (var kvp in originalFormat)
+                {
+                    stringItemFormat[kvp.Key] = kvp.Value.Items ?? new List<string>();
+                }
+
+                // Group time series data by date
+                var groupedByDate = timeSeriesFormat
+                    .SelectMany(kvp => kvp.Value)
+                    .Where(p => p.Timestamp.HasValue)
+                    .GroupBy(p => p.Timestamp.Value.Date)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.ToList()
+                    );
+
+                return (stringItemFormat, groupedByDate);
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Error parsing OpenAI response: {ex.Message}");
                 try
                 {
-                    // Fallback to using CleanJsonResponseHelper
-                    return _cleanJsonResponseHelper.CleanAndParseJson<Dictionary<string, List<string>>>(responseString)
+                    var fallbackResult = _cleanJsonResponseHelper.CleanAndParseJson<Dictionary<string, List<string>>>(responseString)
                         ?? new Dictionary<string, List<string>>();
+
+                    return (fallbackResult, new Dictionary<DateTime, List<TimeSeriesDataPoint>>());
                 }
                 catch (Exception innerEx)
                 {
@@ -215,6 +266,7 @@ namespace OCR_AI_Grocey.Services.Implementations
                 }
             }
         }
+
 
         private string CleanJsonResponse(string response)
         {

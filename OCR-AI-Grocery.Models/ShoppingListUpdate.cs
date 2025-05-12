@@ -12,5 +12,6 @@ namespace OCR_AI_Grocery.Models
         public Dictionary<string, List<string>> NewItems { get; set; }
         public string StoreName { get; set; }
         public ShoppingList MergedList { get; set; }
+        public string TimeSeriesData { get; set; }
     }
 }

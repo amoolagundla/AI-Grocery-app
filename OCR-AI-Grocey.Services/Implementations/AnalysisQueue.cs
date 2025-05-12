@@ -19,7 +19,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             _queueSender = queueSender;
         }
 
-        public   async Task SendToAnalysisQueue(IDictionary<string, string> metadata, string extractedText)
+        public   async Task SendToAnalysisQueue(IDictionary<string, string> metadata, string extractedText,string subject= "ReceiptAnalysis")
         {
             var queueMessage = JsonConvert.SerializeObject(new
             {
@@ -31,7 +31,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             var message = new ServiceBusMessage(Encoding.UTF8.GetBytes(queueMessage))
             {
                 ContentType = "application/json",
-                Subject = "ReceiptAnalysis",
+                Subject = subject,
                 MessageId = Guid.NewGuid().ToString()
             };
 

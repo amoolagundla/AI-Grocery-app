@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace OCR_AI_Grocery.services
 {
-    public class CleanJsonResponseHelper
+    public class CleanJsonResponseHelper : ICleanJsonResponseHelper
     {
         private readonly ILogger _logger;
 
@@ -120,7 +120,8 @@ namespace OCR_AI_Grocery.services
                     // Last resort - try with more tolerant settings
                     var settings = new JsonSerializerSettings
                     {
-                        Error = (sender, args) => {
+                        Error = (sender, args) =>
+                        {
                             _logger.LogWarning($"JSON error suppressed: {args.ErrorContext.Error.Message}");
                             args.ErrorContext.Handled = true;
                         },
