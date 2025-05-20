@@ -19,14 +19,15 @@ namespace OCR_AI_Grocey.Services.Implementations
         private readonly INotificationService _notificationService;
         private readonly ILogger<AnalyzeUserReceiptsService> _logger;
         private readonly IAIMLInterface analysisQueue;
-
+        private readonly IPredictionsRepository predictionsRepository;
         public AnalyzeUserReceiptsService(
             IReceiptRepository receiptRepository,
             IShoppingListRepository shoppingListRepository,
             IOpenAIService openAIService,
             INotificationService notificationService,
             ILoggerFactory loggerFactory,
-            IAIMLInterface analysisQueue)
+            IAIMLInterface analysisQueue,
+            IPredictionsRepository predictionsRepository)
         {
             _receiptRepository = receiptRepository;
             _shoppingListRepository = shoppingListRepository;
@@ -34,6 +35,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             _notificationService = notificationService;
             _logger = loggerFactory.CreateLogger<AnalyzeUserReceiptsService>();
             this.analysisQueue = analysisQueue;
+            this.predictionsRepository = predictionsRepository;
         }
 
         public async Task ProcessReceiptAnalysis(ServiceBusReceivedMessage message)
@@ -63,18 +65,71 @@ namespace OCR_AI_Grocey.Services.Implementations
                 return;
             }
 
-            var shoppingListUpdate = await CreateShoppingListUpdate(unprocessedReceipts, receiptAnalysis.FamilyId,receiptAnalysis.UserEmail);
+            var shoppingListUpdate = await CreateShoppingListUpdate(unprocessedReceipts, receiptAnalysis.FamilyId, receiptAnalysis.UserEmail);
 
             await Task.WhenAll(
                 UpdateShoppingList(shoppingListUpdate),
                 UpdateReceiptRecords(unprocessedReceipts, shoppingListUpdate),
-                NotifyUser(receiptAnalysis, shoppingListUpdate), 
+                NotifyUser(receiptAnalysis, shoppingListUpdate),
                 NotifyAIML(shoppingListUpdate.TimeSeriesData, receiptAnalysis.UserEmail)
             );
+
+            await predictSuggestions(receiptAnalysis);
+        }
+
+        private async Task predictSuggestions(ReceiptAnalysisMessage receiptAnalysis)
+        {
+            // --- New Feature: Generate and Save Top 10 Buying Predictions ---
+            try
+            {
+                // 1. Gather all receipts for this family
+                var allReceipts = await _receiptRepository.FetchReceipts();
+                var allTimeSeriesPoints = new List<TimeSeriesDataPoint>();
+                foreach (var receipt in allReceipts.Where(r => r.FamilyId == receiptAnalysis.FamilyId))
+                {
+                    if (!string.IsNullOrEmpty(receipt.TimeSeriesData))
+                    {
+                        var dict = JsonConvert.DeserializeObject<Dictionary<string, List<TimeSeriesDataPoint>>>(receipt.TimeSeriesData);
+                        if (dict != null)
+                            allTimeSeriesPoints.AddRange(dict.SelectMany(kvp => kvp.Value));
+                    }
+                }
+                var openAiInput = allTimeSeriesPoints.Select(p => new
+                {
+                    item = p.Item,
+                    ds = p.Timestamp?.ToString("yyyy-MM-dd"),
+                    y = p.Price
+                }).ToList();
+                var inputJson = JsonConvert.SerializeObject(openAiInput);
+
+                string prompt = @"You are a personal grocery shopping assistant. You receive structured historical purchase data in JSON format. Your task is to:
+                1. Identify and list the most frequently bought items.
+                2. For each item, calculate the average time interval (in days) between purchases.
+                3. Identify items where the time since last purchase is greater than or equal to the average interval. These are the items the user might be due to purchase again.
+                4. Return:
+                • Top 10 most frequently bought items.
+                • Top items that the user is likely to buy next.
+                Input JSON format: [ { ""item"": ""Milk"", ""ds"": ""2025-03-14"", ""y"": 4.69 }, ... ]
+                Output format (example): { ""frequentlyBoughtItems"": [ { ""item"": ""Milk"", ""count"": 14 }, { ""item"": ""Avocados"", ""count"": 12 } ], ""predictedItemsToBuyNext"": [ { ""item"": ""Tea"", ""lastPurchased"": ""2024-11-15"", ""daysSinceLast"": 180, ""avgIntervalDays"": 14 } ] }";
+
+                string predictionJson = await _openAIService.GetPredictionsFromOpenAI(prompt, inputJson);
+
+                await predictionsRepository.SavePrediction(new PredictionDocument
+                {
+                    FamilyId = receiptAnalysis.FamilyId,
+                    UserEmail = receiptAnalysis.UserEmail,
+                    PredictionJson = predictionJson,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate or save OpenAI predictions for family {FamilyId}", receiptAnalysis.FamilyId);
+            }
         }
 
         private async Task NotifyAIML(string timeSeriesData, string userEmail)
-        { 
+        {
             await analysisQueue.SendNotification(JsonConvert.SerializeObject(timeSeriesData));
         }
 
@@ -103,10 +158,10 @@ namespace OCR_AI_Grocey.Services.Implementations
             string familyId,
             string userEmail)
         {
-            var shoppinglists= await _shoppingListRepository.GetExistingShoppingList(familyId);
+            var shoppinglists = await _shoppingListRepository.GetExistingShoppingList(familyId);
             var items = await _openAIService.AnalyzeReceiptsWithOpenAI(receipts);
             var analyzedItems = items.Item1;
-            var timeseriesData=items.Item2;
+            var timeseriesData = items.Item2;
             // ✅ Inject UserEmail into every data point
             foreach (var dailyPoints in timeseriesData.Values)
             {
@@ -128,7 +183,7 @@ namespace OCR_AI_Grocey.Services.Implementations
                 NewItems = analyzedItems,
                 StoreName = analyzedItems.Keys.FirstOrDefault() ?? "Unknown Store",
                 MergedList = MergeShoppingLists(existingList, analyzedItems),
-                TimeSeriesData= JsonConvert.SerializeObject(timeseriesData)
+                TimeSeriesData = JsonConvert.SerializeObject(timeseriesData)
             };
         }
 
@@ -148,7 +203,7 @@ namespace OCR_AI_Grocey.Services.Implementations
                 receipt.UploadDate = DateTime.UtcNow;
                 receipt.StoreItems = update.NewItems;
                 receipt.StoreName = update.StoreName;
-                receipt.TimeSeriesData= update.TimeSeriesData;
+                receipt.TimeSeriesData = update.TimeSeriesData;
                 await _receiptRepository.UpdateReceipt(receipt);
             }
         }
@@ -210,7 +265,7 @@ namespace OCR_AI_Grocey.Services.Implementations
         {
             try
             {
-                var receipt= await _receiptRepository.FetchRecipet(receiptId);
+                var receipt = await _receiptRepository.FetchRecipet(receiptId);
                 var combinedText = string.Join("", receipt.FirstOrDefault().ReceiptText);
                 return await _openAIService.AnalyzeReceiptWithOpenAIAsync(combinedText);
 
@@ -225,6 +280,6 @@ namespace OCR_AI_Grocey.Services.Implementations
         {
             throw new NotImplementedException();
         }
-    } 
-     
-} 
+    }
+
+}

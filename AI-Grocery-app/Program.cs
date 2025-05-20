@@ -70,6 +70,11 @@ var host = new HostBuilder()
         {
             throw new InvalidOperationException("QueueConnectionString configuration is missing");
         }
+        services.AddHttpClient("AzureML", client =>
+        {
+            var apiKey = "NxbdijU8hBCE874ywxFxesFF1pQVWYkz";
+            client.DefaultRequestHeaders.Add("x-api-key", apiKey); //   use a custom header like this
+        });
 
         // Register clients - we need separate clients since they use different connection strings
         services.AddSingleton(new ServiceBusClient(receiptQueueConnectionString));
@@ -108,7 +113,9 @@ var host = new HostBuilder()
         services.AddSingleton<IAnalysisQueue, AnalysisQueue>();
         services.AddScoped<IAnalyzeUserReceiptsService, AnalyzeUserReceiptsService>();   
         services.AddSingleton<ICleanJsonResponseHelper,CleanJsonResponseHelper>();
+        services.AddSingleton<ITimeGen1Interface, TimeGen1Interface>(); 
         services.AddSingleton<IJsonResponseParser,JsonResponseParser>();
+        services.AddSingleton<IPredictionsRepository, PredictionsRepository>();
         services.AddSingleton<TimeSeriesJsonParser>(); 
         // Register activity functions
         services.AddSingleton<AnalyzeUserReceiptsActivityFunction>(); 

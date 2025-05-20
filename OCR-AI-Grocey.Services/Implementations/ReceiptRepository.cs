@@ -75,7 +75,41 @@ namespace OCR_AI_Grocey.Services.Implementations
             }
         }
 
-        
+        public async Task<List<ReceiptDocument>> FetchReceipts()
+        {
+            try
+            {
+
+
+                var query = new QueryDefinition(
+                  "SELECT * FROM c ");
+
+                _logger.LogInformation("Querying Cosmos DB ");
+
+                var receipts = new List<ReceiptDocument>();
+                using FeedIterator<ReceiptDocument> queryIterator = _receiptsContainer.GetItemQueryIterator<ReceiptDocument>(query);
+
+                while (queryIterator.HasMoreResults)
+                {
+                    FeedResponse<ReceiptDocument> response = await queryIterator.ReadNextAsync();
+                    receipts.AddRange(response);
+                }
+
+                 
+                return receipts;
+            }
+            catch (CosmosException ex)
+            {
+                _logger.LogError(ex, "Cosmos DB error fetching receipt with id  : {StatusCode}",   ex.StatusCode);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error fetching receipt with id  "  );
+                throw;
+            }
+        }
+
 
         public async Task<List<ReceiptDocument>> FetchUnprocessedReceipts(string familyId)
         {

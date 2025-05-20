@@ -55,10 +55,18 @@ namespace OCR_AI_Grocey.Services.Implementations
                 throw;
             }
         }
-
+        public async Task<(Dictionary<string, List<string>>, Dictionary<DateTime, List<TimeSeriesDataPoint>>)> AnalyzeReceiptsWithOpenAI(ReceiptDocument receipts)
+        { 
+            return await RunOpenAI(receipts.ReceiptText);
+        }
         public async Task<(Dictionary<string, List<string>>, Dictionary<DateTime, List<TimeSeriesDataPoint>>)> AnalyzeReceiptsWithOpenAI(List<ReceiptDocument> receipts)
         {
             var allReceiptsText = string.Join("\n\n", receipts.Select(r => r.ReceiptText));
+            return await RunOpenAI(allReceiptsText);
+        }
+
+        private async Task<(Dictionary<string, List<string>>, Dictionary<DateTime, List<TimeSeriesDataPoint>>)> RunOpenAI(string allReceiptsText)
+        {
             var prompt = GenerateOpenAIPrompt(allReceiptsText);
 
             try
@@ -75,7 +83,7 @@ namespace OCR_AI_Grocey.Services.Implementations
                 response.EnsureSuccessStatusCode();
 
                 var responseString = await response.Content.ReadAsStringAsync();
-                return ParseOpenAIResponse(responseString); 
+                return ParseOpenAIResponse(responseString);
             }
             catch (Exception ex)
             {
@@ -123,6 +131,34 @@ namespace OCR_AI_Grocey.Services.Implementations
                 _logger.LogError($"Error normalizing store name with OpenAI: {ex.Message}");
                 return "Unknown Store";
             }
+        }
+
+        public async Task<string> GetPredictionsFromOpenAI(string prompt, string inputJson)
+        {
+            var openAiKey = Environment.GetEnvironmentVariable("OpenAI_API_Key")
+                ?? throw new InvalidOperationException("OpenAI API Key not found");
+
+            var requestBody = new
+            {
+                model = "gpt-4o-mini",
+                messages = new[]
+                {
+                    new { role = "system", content = "You are a precise JSON formatter. Return only valid JSON without any additional text or explanations." },
+                    new { role = "user", content = prompt + "\n\nInput JSON:\n" + inputJson }
+                },
+                temperature = 0.2,
+                max_tokens = 1000
+            };
+
+            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", openAiKey);
+
+            var response = await _httpClient.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", requestBody);
+            response.EnsureSuccessStatusCode();
+
+            var responseString = await response.Content.ReadAsStringAsync();
+            // Extract the content from the OpenAI response
+            var openAIResponse = JsonConvert.DeserializeObject<OpenAIResponse>(responseString);
+            return openAIResponse?.Choices?.FirstOrDefault()?.Message?.Content?.Trim() ?? "{}";
         }
 
         private string GenerateOpenAIPrompt(string receiptsText) => $@"
@@ -266,7 +302,7 @@ namespace OCR_AI_Grocey.Services.Implementations
             }
         }
 
-
+    
         private string CleanJsonResponse(string response)
         {
             // Remove markdown code block markers if present

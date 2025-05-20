@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Azure.Cosmos.Linq;
 using Newtonsoft.Json;
 
 namespace OCR_AI_Grocey.Services.Helpers
@@ -141,6 +142,33 @@ namespace OCR_AI_Grocey.Services.Helpers
 
         [JsonProperty("user_email")]
         public string? UserEmail { get; set; }
+    }
+    public class TimeSeriesPayload : Dictionary<string, List<TimeSeriesDataPoint>>
+    {
+        /// <summary>
+        /// Gets all data points across all dates.
+        /// </summary>
+        [JsonIgnore]
+        public IEnumerable<TimeSeriesDataPoint> AllPoints => this.SelectMany(kvp => kvp.Value);
+
+        /// <summary>
+        /// Gets all unique items across all dates.
+        /// </summary>
+        [JsonIgnore]
+        public IEnumerable<string> UniqueItems => AllPoints.Select(p => p.Item).Where(i => !string.IsNullOrWhiteSpace(i)).Distinct();
+
+        /// <summary>
+        /// Groups all points by item name.
+        /// </summary>
+        public Dictionary<string, List<TimeSeriesDataPoint>> GroupByItem()
+        {
+            return AllPoints
+                .Where(p => !string.IsNullOrWhiteSpace(p.Item))
+                .GroupBy(p => p.Item)
+                .ToDictionary(g => g.Key, g => g.ToList());
+        }
+
+         
     }
 
     /// <summary>

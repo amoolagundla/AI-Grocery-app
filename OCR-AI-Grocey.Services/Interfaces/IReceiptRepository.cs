@@ -12,5 +12,6 @@ namespace OCR_AI_Grocey.Services.Interfaces
         Task<List<ReceiptDocument>> FetchUnprocessedReceipts(string familyId);
         Task UpdateReceipt(ReceiptDocument receipt);
         Task<List<ReceiptDocument>> FetchRecipet(string receiptId);
+        Task<List<ReceiptDocument>> FetchReceipts( );
     }
 }
