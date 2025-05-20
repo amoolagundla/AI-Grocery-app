@@ -43,7 +43,7 @@ namespace OCR_AI_Grocery
 
         [Function("GetPredictionsByUserEmail")]
         public async Task<HttpResponseData> GetPredictionsByUserEmail(
-            [HttpTrigger(AuthorizationLevel.Function, "get", Route = "predictions/{userEmail}")] HttpRequestData req,
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "predictions/{userEmail}")] HttpRequestData req,
             string userEmail)
         {
             var prediction = await _predictionsRepository.GetLatestPredictionByUserEmail(userEmail);
