@@ -15,19 +15,21 @@ using Microsoft.Azure.Cosmos.Linq;
 using OCR_AI_Grocey.Services.Interfaces;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Azure.Functions.Worker.Http;
+using System.Net;
 
 namespace OCR_AI_Grocery
 {
     public class TrainTimeGen1Function
     {
-        
         private readonly ILogger<TrainTimeGen1Function> _logger;
         private readonly ITimeGen1Interface timeGen;
+        private readonly IPredictionsRepository _predictionsRepository;
 
-        public TrainTimeGen1Function(ILogger<TrainTimeGen1Function> logger, ITimeGen1Interface timeGen)
+        public TrainTimeGen1Function(ILogger<TrainTimeGen1Function> logger, ITimeGen1Interface timeGen, IPredictionsRepository predictionsRepository)
         {
             _logger = logger;
             this.timeGen = timeGen;
+            _predictionsRepository = predictionsRepository;
         }
 
         [Function("TrainTimeGen1HttpFunction")]
@@ -38,6 +40,28 @@ namespace OCR_AI_Grocery
            // await timeGen.TrainTheModel();
             return "OK";
         }
-         
+
+        [Function("GetPredictionsByUserEmail")]
+        public async Task<HttpResponseData> GetPredictionsByUserEmail(
+            [HttpTrigger(AuthorizationLevel.Function, "get", Route = "predictions/{userEmail}")] HttpRequestData req,
+            string userEmail)
+        {
+            var prediction = await _predictionsRepository.GetLatestPredictionByUserEmail(userEmail);
+
+            var response = req.CreateResponse(prediction != null ? HttpStatusCode.OK : HttpStatusCode.NotFound);
+
+            if (prediction != null)
+            {
+                // Optionally, parse prediction.PredictionJson to return as an object
+                response.Headers.Add("Content-Type", "application/json");
+                await response.WriteStringAsync(prediction.PredictionJson);
+            }
+            else
+            {
+                await response.WriteStringAsync("{\"message\": \"No prediction found for this user.\"}");
+            }
+
+            return response;
+        }
     }
 }
