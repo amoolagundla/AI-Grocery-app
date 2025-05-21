@@ -179,7 +179,7 @@ namespace OCR_AI_Grocey.Services.Helpers
                         result.Items = ConvertToList<string>(kvp.Value ?? new List<string>());
                         break;
                     case "prices":
-                        result.Prices = ConvertToList<double>(kvp.Value?? new List<double>());
+                        result.Prices = ConvertToList<double?>(kvp.Value?? new List<double?>());
                         break;
                     case "purchase_date":
                         result.PurchaseDate = (string?)(kvp.Value ?? string.Empty);

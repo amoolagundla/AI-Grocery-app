@@ -129,10 +129,10 @@ namespace OCR_AI_Grocey.Services.Helpers
     public class StoreData
     {
         [JsonProperty("items")] 
-        public List<string> Items { get; set; } = new List<string>();
+        public List<string> Items { get; set; } = new();
 
         [JsonProperty("prices")]
-        public List<double> Prices { get; set; } = new List<double>();
+        public List<double?> Prices { get; set; } = new ();
 
         [JsonProperty("purchase_date")]
         public string? PurchaseDate { get; set; }
@@ -181,7 +181,7 @@ namespace OCR_AI_Grocey.Services.Helpers
         public long UnixTimestamp { get; set; } // Useful for many ML algorithms
         public string Store { get; set; }
         public string Item { get; set; }
-        public double Price { get; set; }
+        public double? Price { get; set; }
         public string? TransactionId { get; set; }
 
         // Derived Features (useful for ML)
