@@ -15,5 +15,6 @@ namespace OCR_AI_Grocey.Services.Interfaces
         Task<Dictionary<string, List<string>>> AnalyzeReceiptWithOpenAIAsync(string receipt);
         Task<(Dictionary<string, List<string>>, Dictionary<DateTime, List<TimeSeriesDataPoint>>)> AnalyzeReceiptsWithOpenAI(ReceiptDocument receipts);
         Task<string> GetPredictionsFromOpenAI(string prompt, string inputJson);
+        Task<string> ChatWithKidsAsync(string userMessage);
     }
 }

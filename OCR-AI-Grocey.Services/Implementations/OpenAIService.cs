@@ -161,6 +161,34 @@ namespace OCR_AI_Grocey.Services.Implementations
             return openAIResponse?.Choices?.FirstOrDefault()?.Message?.Content?.Trim() ?? "{}";
         }
 
+        public async Task<string> ChatWithKidsAsync(string userMessage)
+        {
+            var openAiKey = Environment.GetEnvironmentVariable("OpenAI_API_Key")
+                ?? throw new InvalidOperationException("OpenAI API Key not found");
+
+            var requestBody = new
+            {
+                model = "gpt-4o-mini",
+                messages = new[]
+                {
+                    new { role = "system", content = "You are a friendly, safe, and age-appropriate assistant for children. Always keep your responses positive, simple, and fun. Avoid any inappropriate or complex topics." },
+                    new { role = "user", content = userMessage }
+                },
+                temperature = 0.7,
+                max_tokens = 300
+            };
+
+            _httpClient.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", openAiKey);
+
+            var response = await _httpClient.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", requestBody);
+            response.EnsureSuccessStatusCode();
+
+            var responseString = await response.Content.ReadAsStringAsync();
+            var openAIResponse = JsonConvert.DeserializeObject<OpenAIResponse>(responseString);
+            return openAIResponse?.Choices?.FirstOrDefault()?.Message?.Content?.Trim() ?? string.Empty;
+        }
+
         private string GenerateOpenAIPrompt(string receiptsText) => $@"
                                                                     You are an expert in data normalization and product categorization. Analyze the following receipts and return a structured shopping list grouped by store, including pricing data. Follow these rules strictly:
 
